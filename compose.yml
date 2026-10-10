@@ -1,0 +1,225 @@
+# Forgejo-Stack: Git + Container-Registry + npm-Registry + CI (Actions)
+# Reverse Proxy/TLS: dein bestehender Nginx Proxy Manager (NPM)
+#
+# Ablauf:
+#   1. cp .env.example .env  und Werte ausfüllen
+#   2. docker network create proxy   (nur falls es das gemeinsame NPM-Netz noch nicht gibt;
+#      NPM-Container muss in diesem Netz hängen)
+#   3. docker compose up -d          -> Forgejo, DB, Uptime Kuma, Backup
+#   4. NPM-Proxy-Host anlegen: git.example.com -> Host "forgejo", Port 3000,
+#      Websockets an, Advanced: client_max_body_size 0;
+#   5. https://git.example.com öffnen, Installer durchklicken (DB-Daten sind vorbelegt),
+#      Admin anlegen
+#   6. In Forgejo: Runner-Token (Admin > Actions > Runners) und
+#      Token für Benutzer "renovate-bot" erzeugen, in .env eintragen
+#   7. docker compose --profile ci up -d   -> Runner, Docker-in-Docker, Renovate
+
+name: forgejo-stack
+
+services:
+  forgejo:
+    image: codeberg.org/forgejo/forgejo:${FORGEJO_VERSION}
+    container_name: forgejo
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      USER_UID: "1000"
+      USER_GID: "1000"
+      TZ: ${TZ}
+      FORGEJO__database__DB_TYPE: postgres
+      FORGEJO__database__HOST: db:5432
+      FORGEJO__database__NAME: forgejo
+      FORGEJO__database__USER: forgejo
+      FORGEJO__database__PASSWD: ${POSTGRES_PASSWORD}
+      FORGEJO__server__DOMAIN: ${FORGEJO_DOMAIN}
+      FORGEJO__server__ROOT_URL: https://${FORGEJO_DOMAIN}/
+      FORGEJO__server__SSH_DOMAIN: ${FORGEJO_DOMAIN}
+      FORGEJO__server__SSH_PORT: ${FORGEJO_SSH_PORT}
+      FORGEJO__server__SSH_LISTEN_PORT: "22"
+      FORGEJO__service__DISABLE_REGISTRATION: "true"
+      FORGEJO__actions__ENABLED: "true"
+      # damit "uses: actions/checkout@v4" wie bei GitHub funktioniert
+      FORGEJO__actions__DEFAULT_ACTIONS_URL: https://github.com
+      # Container-Registry und npm-Registry
+      FORGEJO__packages__ENABLED: "true"
+    volumes:
+      - ./data/forgejo:/data
+    ports:
+      # nur Git-über-SSH wird veröffentlicht; HTTP läuft über NPM im proxy-Netz
+      - "${FORGEJO_SSH_PORT}:22"
+      # Falls NPM NICHT im selben Docker-Netz hängt, stattdessen:
+      # - "127.0.0.1:3000:3000"
+    networks:
+      - internal
+      - proxy
+
+  db:
+    image: postgres:16-alpine
+    container_name: forgejo-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: forgejo
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: forgejo
+      TZ: ${TZ}
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U forgejo -d forgejo"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - internal
+
+  # ---------------------------------------------------------------- CI
+  # Docker-in-Docker: Builds laufen isoliert, kein Zugriff auf den Host-Docker
+  dind:
+    image: docker:27-dind
+    container_name: forgejo-dind
+    profiles: [ci]
+    restart: unless-stopped
+    privileged: true
+    command: ["dockerd", "-H", "tcp://0.0.0.0:2375", "--tls=false"]
+    environment:
+      DOCKER_TLS_CERTDIR: ""
+    volumes:
+      - dind-data:/var/lib/docker
+    networks:
+      ci:
+        aliases:
+          - dind
+
+  runner:
+    image: code.forgejo.org/forgejo/runner:${RUNNER_VERSION}
+    container_name: forgejo-runner
+    profiles: [ci]
+    restart: unless-stopped
+    user: "0:0"
+    working_dir: /data
+    depends_on:
+      - dind
+    environment:
+      DOCKER_HOST: tcp://dind:2375
+      TZ: ${TZ}
+      RUNNER_TOKEN: ${RUNNER_TOKEN}
+      RUNNER_NAME: ${RUNNER_NAME}
+      FORGEJO_INSTANCE_URL: https://${FORGEJO_DOMAIN}
+    volumes:
+      - ./data/runner:/data
+      - ./runner-config.yml:/config.yml:ro
+    # Registriert sich beim ersten Start selbst, danach nur noch daemon
+    command: >
+      /bin/sh -c '
+      if [ ! -f /data/.runner ]; then
+        forgejo-runner register --no-interactive
+          --token "$$RUNNER_TOKEN"
+          --name "$$RUNNER_NAME"
+          --instance "$$FORGEJO_INSTANCE_URL"
+          --labels "ubuntu-latest:docker://catthehacker/ubuntu:act-22.04,docker:docker://node:22-bookworm";
+      fi;
+      forgejo-runner --config /config.yml daemon'
+    networks:
+      - ci
+
+  # Öffnet PRs für veraltete npm-Pakete und Docker-Images (läuft alle 6 Stunden)
+  renovate:
+    image: ghcr.io/renovatebot/renovate:latest
+    container_name: forgejo-renovate
+    profiles: [ci]
+    restart: unless-stopped
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        while true; do
+          renovate || true
+          sleep 21600
+        done
+    environment:
+      LOG_LEVEL: info
+      RENOVATE_PLATFORM: forgejo
+      RENOVATE_ENDPOINT: https://${FORGEJO_DOMAIN}/api/v1/
+      RENOVATE_TOKEN: ${RENOVATE_TOKEN}
+      RENOVATE_AUTODISCOVER: "true"
+      RENOVATE_GIT_AUTHOR: "Renovate Bot <renovate@${FORGEJO_DOMAIN}>"
+      # optional, vermeidet GitHub-Rate-Limits beim Abrufen von Changelogs
+      RENOVATE_GITHUB_COM_TOKEN: ${RENOVATE_GITHUB_COM_TOKEN:-}
+    networks:
+      - internal
+
+  # ---------------------------------------------------------- Monitoring
+  uptime-kuma:
+    image: louislam/uptime-kuma:2
+    container_name: uptime-kuma
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ}
+    volumes:
+      - ./data/kuma:/app/data
+    networks:
+      - proxy
+
+  # -------------------------------------------------------------- Backup
+  # 1) konsistenter nächtlicher Postgres-Dump in ./backup/db
+  db-dump:
+    image: prodrigestivill/postgres-backup-local:16
+    container_name: forgejo-db-dump
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      POSTGRES_HOST: db
+      POSTGRES_DB: forgejo
+      POSTGRES_USER: forgejo
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      SCHEDULE: "0 0 3 * * *"
+      BACKUP_KEEP_DAYS: "3"
+      BACKUP_KEEP_WEEKS: "0"
+      BACKUP_KEEP_MONTHS: "0"
+      TZ: ${TZ}
+    volumes:
+      - ./backup/db:/backups
+    networks:
+      - internal
+
+  # 2) restic schiebt Dumps + Forgejo-Daten verschlüsselt ins Offsite-Ziel.
+  #    Die laufende Postgres-Datei (data/postgres) wird bewusst NICHT gesichert.
+  restic:
+    image: mazzolino/restic:1.7
+    container_name: forgejo-restic
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ}
+      RUN_ON_STARTUP: "false"
+      BACKUP_CRON: "0 30 3 * * *"
+      PRUNE_CRON: "0 0 5 * * 0"
+      CHECK_CRON: "0 0 6 * * 0"
+      RESTIC_REPOSITORY: ${RESTIC_REPOSITORY}
+      RESTIC_PASSWORD: ${RESTIC_PASSWORD}
+      RESTIC_BACKUP_SOURCES: /source
+      RESTIC_FORGET_ARGS: "--keep-daily 7 --keep-weekly 4 --keep-monthly 6"
+      # für S3-kompatible Ziele (bei SFTP/Storage Box stattdessen SSH-Key mounten)
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+    volumes:
+      - ./data/forgejo:/source/forgejo:ro
+      - ./data/kuma:/source/kuma:ro
+      - ./backup/db:/source/db-dumps:ro
+    networks:
+      - internal
+
+networks:
+  internal:
+  # gemeinsames Netz mit dem Nginx Proxy Manager
+  proxy:
+    external: true
+    name: ${PROXY_NETWORK:-proxy}
+  # Netz für Runner, Docker-in-Docker und Job-Container
+  ci:
+    name: forgejo-ci
+
+volumes:
+  dind-data:

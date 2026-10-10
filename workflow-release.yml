@@ -1,0 +1,44 @@
+# Ablegen als: .forgejo/workflows/release.yml im Projekt-Repo
+#
+# Manuelle Freigabe = Git-Tag setzen:  git tag v1.2.3 && git push origin v1.2.3
+# Danach auf dem Zielserver in der Compose-Datei die Version anheben und:
+#   docker compose pull && docker compose up -d
+#
+# Einmalig im Repo (Einstellungen > Actions > Secrets) anlegen:
+#   REGISTRY_USER   Forgejo-Benutzername
+#   REGISTRY_TOKEN  Zugriffstoken mit Recht "package: read/write"
+#
+# Hinweis: Der Repo-Pfad (Benutzer/Organisation + Repo) muss kleingeschrieben sein.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Tests
+        run: |
+          npm ci
+          npm test --if-present
+
+      - name: Build und Push
+        env:
+          REGISTRY_USER: ${{ secrets.REGISTRY_USER }}
+          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+        run: |
+          REGISTRY="${GITHUB_SERVER_URL#https://}"
+          IMAGE="${REGISTRY}/${GITHUB_REPOSITORY}"
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "$REGISTRY_TOKEN" | docker login "$REGISTRY" -u "$REGISTRY_USER" --password-stdin
+          docker build -t "$IMAGE:$VERSION" -t "$IMAGE:latest" .
+          docker push "$IMAGE:$VERSION"
+          docker push "$IMAGE:latest"

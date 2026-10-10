@@ -1,0 +1,29 @@
+log:
+  level: info
+
+runner:
+  file: /data/.runner
+  capacity: 2
+  timeout: 3h
+  fetch_timeout: 5s
+  fetch_interval: 2s
+  # Job-Container sprechen mit dem Docker-in-Docker-Daemon
+  # (docker build / docker push in Workflows)
+  envs:
+    DOCKER_HOST: tcp://dind:2375
+
+cache:
+  enabled: true
+
+container:
+  # muss zum Netzwerknamen in compose.yml passen
+  network: forgejo-ci
+  privileged: false
+  options:
+  workdir_parent:
+  # leer = DOCKER_HOST des Runners verwenden
+  docker_host: ""
+  force_pull: false
+
+host:
+  workdir_parent:

@@ -8,6 +8,7 @@ Selbst gehosteter Forgejo-Stack per Docker Compose als Cloud-Repo für Claude-Co
 - Deploy: manuelle Freigabe per Git-Tag (`v1.2.3`), auf dem Zielserver danach `docker compose pull && docker compose up -d`
 
 ## Dateien
+- `README.md`: Überblick, Schnellstart, Betrieb
 - `compose.yml`: Stack (init-secrets, Forgejo, Postgres, bootstrap, dind, Runner, Renovate, Uptime Kuma, db-dump, restic)
 - `bootstrap.sh`: idempotentes Setup nach dem Forgejo-Start (Admin, `renovate-bot`, Tokens)
 - `.env.example`: Vorlage für `.env`

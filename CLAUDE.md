@@ -4,12 +4,13 @@
 Selbst gehosteter Forgejo-Stack per Docker Compose als Cloud-Repo für Claude-Code-Projekte:
 - Git-Hosting, Container-Registry und npm-Registry in Forgejo
 - CI mit Forgejo Actions (GitHub-Actions-kompatibel), Runner mit Docker-in-Docker
-- Reverse Proxy und TLS: bestehender Nginx Proxy Manager (NPM), im gemeinsamen Docker-Netz `proxy`
+- Reverse Proxy und TLS: bestehender Nginx Proxy Manager (NPM), im gemeinsamen Docker-Netz `proxy`; alternativ Caddy (`compose.caddy.yml`, `Caddyfile`)
 - Deploy: manuelle Freigabe per Git-Tag (`v1.2.3`), auf dem Zielserver danach `docker compose pull && docker compose up -d`
 
 ## Dateien
 - `README.md`: Überblick, Schnellstart, Betrieb
 - `compose.yml`: Stack (init-secrets, Forgejo, Postgres, bootstrap, dind, Runner, Renovate, Uptime Kuma, db-dump, restic)
+- `compose.caddy.yml` und `Caddyfile`: optionale Alternative zum NPM (Caddy mit automatischem HTTPS für Forgejo und Uptime Kuma)
 - `bootstrap.sh`: idempotentes Setup nach dem Forgejo-Start (Admin, `renovate-bot`, Tokens)
 - `.env.example`: Vorlage für `.env`
 - `runner-config.yml`: Runner-Konfiguration (Netzwerk `forgejo-ci`, `DOCKER_HOST=tcp://dind:2375`)
@@ -17,7 +18,7 @@ Selbst gehosteter Forgejo-Stack per Docker Compose als Cloud-Repo für Claude-Co
 - `renovate.json`: Vorlage für die Repos
 
 ## Entscheidungen
-- Kein Traefik, kein Caddy, kein Watchtower, Deploy bleibt manuell
+- Kein Traefik, kein Watchtower, Deploy bleibt manuell. Caddy nur als optionale Alternative zum NPM (Overlay-Datei, das Basis-`compose.yml` bleibt unverändert; nicht zusammen mit dem NPM auf demselben Host)
 - Forgejo statt Gitea oder GitLab (leichter, Registry und npm eingebaut)
 - Runner nutzt Docker-in-Docker (`dind`) statt Host-Docker-Socket
 - Runner erreicht Forgejo über die öffentliche URL, nicht über das interne Netz

@@ -2,17 +2,20 @@
 # Reverse Proxy/TLS: dein bestehender Nginx Proxy Manager (NPM)
 #
 # Ablauf:
-#   1. cp .env.example .env  und Werte ausfüllen
+#   1. cp .env.example .env  und Werte ausfüllen (inkl. Admin-Zugang)
 #   2. docker network create proxy   (nur falls es das gemeinsame NPM-Netz noch nicht gibt;
 #      NPM-Container muss in diesem Netz hängen)
-#   3. docker compose up -d          -> Forgejo, DB, Uptime Kuma, Backup
+#   3. docker compose up -d
+#      -> init-secrets erzeugt SECRET_KEY/INTERNAL_TOKEN (./secrets)
+#      -> Forgejo startet ohne Web-Installer (INSTALL_LOCK)
+#      -> bootstrap legt Admin + "renovate-bot" an und erzeugt Access-/Runner-Tokens (./secrets)
+#      -> Runner, Docker-in-Docker und Renovate starten danach automatisch
 #   4. NPM-Proxy-Host anlegen: git.example.com -> Host "forgejo", Port 3000,
 #      Websockets an, Advanced: client_max_body_size 0;
-#   5. https://git.example.com öffnen, Installer durchklicken (DB-Daten sind vorbelegt),
-#      Admin anlegen
-#   6. In Forgejo: Runner-Token (Admin > Actions > Runners) und
-#      Token für Benutzer "renovate-bot" erzeugen, in .env eintragen
-#   7. docker compose --profile ci up -d   -> Runner, Docker-in-Docker, Renovate
+#      (Runner und Renovate erreichen Forgejo über die öffentliche URL, der Proxy-Host
+#      sollte also stehen; bis dahin starten sie neu bzw. warten)
+#   5. Benutzer "renovate-bot" in Forgejo als Mitwirkenden (Collaborator) zu den Repos
+#      bzw. als Mitglied in die Organisation hinzufügen, die er überwachen soll
 
 name: forgejo-stack
 
@@ -24,6 +27,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      init-secrets:
+        condition: service_completed_successfully
     environment:
       USER_UID: "1000"
       USER_GID: "1000"
@@ -33,6 +38,10 @@ services:
       FORGEJO__database__NAME: forgejo
       FORGEJO__database__USER: forgejo
       FORGEJO__database__PASSWD: ${POSTGRES_PASSWORD}
+      # Installer überspringen; Schlüssel kommen aus init-secrets
+      FORGEJO__security__INSTALL_LOCK: "true"
+      FORGEJO__security__SECRET_KEY__FILE: /secrets/secret_key
+      FORGEJO__security__INTERNAL_TOKEN__FILE: /secrets/internal_token
       FORGEJO__server__DOMAIN: ${FORGEJO_DOMAIN}
       FORGEJO__server__ROOT_URL: https://${FORGEJO_DOMAIN}/
       FORGEJO__server__SSH_DOMAIN: ${FORGEJO_DOMAIN}
@@ -46,6 +55,13 @@ services:
       FORGEJO__packages__ENABLED: "true"
     volumes:
       - ./data/forgejo:/data
+      - ./secrets/forgejo:/secrets:ro
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:3000/api/healthz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
     ports:
       # nur Git-über-SSH wird veröffentlicht; HTTP läuft über NPM im proxy-Netz
       - "${FORGEJO_SSH_PORT}:22"
@@ -74,12 +90,69 @@ services:
     networks:
       - internal
 
+  # ------------------------------------------------------------ Bootstrap
+  # Einmalig: erzeugt SECRET_KEY und INTERNAL_TOKEN (idempotent, vorhandene Dateien
+  # bleiben unangetastet). ./secrets ist 700; jeder Verbraucher bekommt nur sein
+  # eigenes Unterverzeichnis gemountet.
+  init-secrets:
+    image: codeberg.org/forgejo/forgejo:${FORGEJO_VERSION}
+    container_name: forgejo-init-secrets
+    restart: "no"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        umask 077
+        mkdir -p /secrets/forgejo /secrets/runner /secrets/renovate
+        chmod 700 /secrets
+        for name in secret_key internal_token; do
+          f=/secrets/forgejo/$$name
+          if [ ! -s "$$f" ]; then
+            case $$name in
+              secret_key) kind=SECRET_KEY ;;
+              internal_token) kind=INTERNAL_TOKEN ;;
+            esac
+            forgejo generate secret "$$kind" > "$$f.tmp"
+            mv "$$f.tmp" "$$f"
+          fi
+          chown 1000:1000 "$$f"
+          chmod 600 "$$f"
+        done
+        chown 1000:1000 /secrets/forgejo
+        chmod 700 /secrets/forgejo
+        # Renovate läuft als unprivilegierter Benutzer im Container; der Schutz liegt
+        # im 700er-Elternverzeichnis auf dem Host
+        chmod 755 /secrets/renovate
+    volumes:
+      - ./secrets:/secrets
+
+  # Läuft nach dem Start von Forgejo: legt Admin und "renovate-bot" an, erzeugt deren
+  # Tokens und den Runner-Registrierungs-Token. Idempotent (siehe bootstrap.sh).
+  bootstrap:
+    image: codeberg.org/forgejo/forgejo:${FORGEJO_VERSION}
+    container_name: forgejo-bootstrap
+    restart: "no"
+    depends_on:
+      forgejo:
+        condition: service_healthy
+    entrypoint: ["/bin/bash", "/bootstrap.sh"]
+    environment:
+      FORGEJO_DOMAIN: ${FORGEJO_DOMAIN}
+      FORGEJO_ADMIN_USER: ${FORGEJO_ADMIN_USER}
+      FORGEJO_ADMIN_PASSWORD: ${FORGEJO_ADMIN_PASSWORD}
+      FORGEJO_ADMIN_EMAIL: ${FORGEJO_ADMIN_EMAIL}
+    volumes:
+      - ./data/forgejo:/data
+      - ./secrets:/secrets
+      - ./bootstrap.sh:/bootstrap.sh:ro
+    networks:
+      - internal
+
   # ---------------------------------------------------------------- CI
   # Docker-in-Docker: Builds laufen isoliert, kein Zugriff auf den Host-Docker
   dind:
     image: docker:27-dind
     container_name: forgejo-dind
-    profiles: [ci]
     restart: unless-stopped
     privileged: true
     command: ["dockerd", "-H", "tcp://0.0.0.0:2375", "--tls=false"]
@@ -95,27 +168,29 @@ services:
   runner:
     image: code.forgejo.org/forgejo/runner:${RUNNER_VERSION}
     container_name: forgejo-runner
-    profiles: [ci]
     restart: unless-stopped
     user: "0:0"
     working_dir: /data
     depends_on:
-      - dind
+      dind:
+        condition: service_started
+      bootstrap:
+        condition: service_completed_successfully
     environment:
       DOCKER_HOST: tcp://dind:2375
       TZ: ${TZ}
-      RUNNER_TOKEN: ${RUNNER_TOKEN}
       RUNNER_NAME: ${RUNNER_NAME}
       FORGEJO_INSTANCE_URL: https://${FORGEJO_DOMAIN}
     volumes:
       - ./data/runner:/data
+      - ./secrets/runner:/secrets:ro
       - ./runner-config.yml:/config.yml:ro
-    # Registriert sich beim ersten Start selbst, danach nur noch daemon
+    # Registriert sich beim ersten Start selbst (Token aus bootstrap), danach nur noch daemon
     command: >
       /bin/sh -c '
       if [ ! -f /data/.runner ]; then
         forgejo-runner register --no-interactive
-          --token "$$RUNNER_TOKEN"
+          --token "$$(cat /secrets/runner_token)"
           --name "$$RUNNER_NAME"
           --instance "$$FORGEJO_INSTANCE_URL"
           --labels "ubuntu-latest:docker://catthehacker/ubuntu:act-22.04,docker:docker://node:22-bookworm";
@@ -128,11 +203,14 @@ services:
   renovate:
     image: ghcr.io/renovatebot/renovate:latest
     container_name: forgejo-renovate
-    profiles: [ci]
     restart: unless-stopped
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
     entrypoint: ["/bin/bash", "-c"]
     command:
       - |
+        export RENOVATE_TOKEN="$$(cat /secrets/renovate_token)"
         while true; do
           renovate || true
           sleep 21600
@@ -141,11 +219,12 @@ services:
       LOG_LEVEL: info
       RENOVATE_PLATFORM: forgejo
       RENOVATE_ENDPOINT: https://${FORGEJO_DOMAIN}/api/v1/
-      RENOVATE_TOKEN: ${RENOVATE_TOKEN}
       RENOVATE_AUTODISCOVER: "true"
       RENOVATE_GIT_AUTHOR: "Renovate Bot <renovate@${FORGEJO_DOMAIN}>"
       # optional, vermeidet GitHub-Rate-Limits beim Abrufen von Changelogs
       RENOVATE_GITHUB_COM_TOKEN: ${RENOVATE_GITHUB_COM_TOKEN:-}
+    volumes:
+      - ./secrets/renovate:/secrets:ro
     networks:
       - internal
 

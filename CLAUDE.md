@@ -25,7 +25,7 @@ Selbst gehosteter Forgejo-Stack per Docker Compose als Cloud-Repo für Claude-Co
 - Kein Profil `ci` mehr: `docker compose up -d` startet alles. `init-secrets` erzeugt `SECRET_KEY`/`INTERNAL_TOKEN`, `bootstrap` legt Admin, `renovate-bot` und Tokens an; Runner und Renovate warten auf `bootstrap` (`service_completed_successfully`)
 - `./secrets` (700) hat je Verbraucher ein Unterverzeichnis (`forgejo/`, `runner/`, `renovate/`), das nur dort gemountet wird. Grund: Forgejo (UID 1000) könnte sonst ein root-eigenes 700er-Verzeichnis nicht lesen
 - Admin-Zugangsdaten (`FORGEJO_ADMIN_*`) stehen in `.env`; `renovate-bot` bekommt ein Zufallspasswort, nur der Token zählt
-- Token verloren: Datei in `./secrets/...` löschen und `docker compose up -d` (beim Renovate-Token vorher den alten Token `renovate` in Forgejo löschen)
+- Token verloren: Datei in `./secrets/...` löschen und `docker compose run --rm bootstrap` (beim Renovate-Token vorher den Benutzer `renovate-bot` in Forgejo löschen, damit der Token-Name frei wird)
 
 ## Offene Punkte
 - Image-Tags `FORGEJO_VERSION` und `RUNNER_VERSION` gegen die Registries prüfen (Platzhalter, nicht verifiziert)

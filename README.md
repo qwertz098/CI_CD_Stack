@@ -15,14 +15,15 @@ Selbst gehosteter Git-Server mit Container-Registry, npm-Registry und CI, per Do
 
 1. [Überblick](#überblick)
 2. [Installation Schritt für Schritt](#installation-schritt-für-schritt)
-3. [Erstes Projekt anbinden](#erstes-projekt-anbinden)
-4. [Release und Deploy](#release-und-deploy)
-5. [Renovate](#renovate)
-6. [Monitoring mit Uptime Kuma](#monitoring-mit-uptime-kuma)
-7. [Backup und Restore](#backup-und-restore)
-8. [Betrieb: Updates, Tokens, Reset](#betrieb-updates-tokens-reset)
-9. [Fehlersuche](#fehlersuche)
-10. [Offene Punkte](#offene-punkte)
+3. [Init-Container im Detail](#init-container-im-detail)
+4. [Erstes Projekt anbinden](#erstes-projekt-anbinden)
+5. [Release und Deploy](#release-und-deploy)
+6. [Renovate](#renovate)
+7. [Monitoring mit Uptime Kuma](#monitoring-mit-uptime-kuma)
+8. [Backup und Restore](#backup-und-restore)
+9. [Betrieb: Updates, Tokens, Reset](#betrieb-updates-tokens-reset)
+10. [Fehlersuche](#fehlersuche)
+11. [Offene Punkte](#offene-punkte)
 
 ---
 
@@ -52,7 +53,7 @@ Es gibt keinen Web-Installer und keine manuellen Token-Schritte. `docker compose
 | 3 | `bootstrap` | legt Admin und `renovate-bot` an, erzeugt Renovate-Access-Token und Runner-Registrierungs-Token |
 | 4 | `dind`, `runner`, `renovate` | starten, sobald `bootstrap` erfolgreich war |
 
-`init-secrets` und `bootstrap` laufen einmal und beenden sich (`Exited (0)`). Beide sind idempotent: Wiederholte Läufe ändern nichts, solange die Benutzer und die Token-Dateien in `./secrets` existieren.
+`init-secrets` und `bootstrap` laufen einmal und beenden sich (`Exited (0)`). Beide sind idempotent: Wiederholte Läufe ändern nichts, solange die Benutzer und die Token-Dateien in `./secrets` existieren. Details stehen unter [Init-Container im Detail](#init-container-im-detail).
 
 ### Secrets
 
@@ -266,6 +267,136 @@ Erwartet: `HTTP/2 200`.
    ```
 
    Dann reicht `git clone git@git.example.com:<benutzer>/<repo>.git`.
+
+---
+
+## Init-Container im Detail
+
+Zwei Einmal-Dienste ersetzen den Web-Installer und alle manuellen Token-Schritte. Beide laufen mit `restart: "no"`, beenden sich nach getaner Arbeit (`Exited (0)`) und sind idempotent.
+
+```
+init-secrets ──► db ──► forgejo (healthy) ──► bootstrap ──► runner
+ (Schlüssel)            (INSTALL_LOCK)        (Benutzer,  └─► renovate
+                                               Tokens)
+```
+
+### Schritt A: `init-secrets` (vor Forgejo)
+
+**Aufgabe:** erzeugt die beiden Schlüssel, die Forgejo sonst beim Web-Installer selbst anlegen würde.
+
+Was der Dienst tut (aus `compose.yml`):
+
+1. legt `./secrets/forgejo`, `./secrets/runner` und `./secrets/renovate` an und setzt `./secrets` auf `700`
+2. erzeugt `secret_key` und `internal_token` mit `forgejo generate secret SECRET_KEY` bzw. `INTERNAL_TOKEN`, **nur wenn die Datei fehlt oder leer ist**
+3. setzt die Schlüsseldateien auf Besitzer `1000:1000` (Forgejo-Benutzer) und Modus `600`, das Verzeichnis `secrets/forgejo` auf `700`
+4. setzt `secrets/renovate` auf `755`, weil Renovate im Container als unprivilegierter Benutzer läuft. Der Schutz liegt im `700`-Elternverzeichnis auf dem Host
+
+Wie Forgejo die Schlüssel bekommt (Umgebung des Dienstes `forgejo`):
+
+| Variable | Wert | Wirkung |
+| --- | --- | --- |
+| `FORGEJO__security__INSTALL_LOCK` | `true` | Installer wird übersprungen, Datenbank-Migration läuft beim Start |
+| `FORGEJO__security__SECRET_KEY__FILE` | `/secrets/secret_key` | Schlüssel wird aus der Datei gelesen |
+| `FORGEJO__security__INTERNAL_TOKEN__FILE` | `/secrets/internal_token` | dito |
+
+Der Dienst `forgejo` wartet auf `init-secrets` (`service_completed_successfully`) und bekommt nur `./secrets/forgejo` gemountet (read-only).
+
+**Prüfen:**
+
+```bash
+docker compose logs init-secrets
+sudo ls -l secrets/forgejo      # secret_key und internal_token, Besitzer 1000, Modus -rw-------
+```
+
+**Einzeln ausführen:** `docker compose run --rm init-secrets`. Vorhandene Schlüssel bleiben unverändert.
+
+> **Wichtig:** Ändere oder lösche `secret_key` und `internal_token` nie bei einer laufenden Installation. Mit einem neuen `SECRET_KEY` lassen sich verschlüsselte Inhalte (z. B. 2FA-Geheimnisse) nicht mehr lesen.
+
+### Schritt B: `bootstrap` (nach Forgejo)
+
+**Aufgabe:** legt Benutzer an und erzeugt die Tokens, die Runner und Renovate brauchen.
+
+**Voraussetzung:** Forgejo ist `healthy` (Healthcheck gegen `/api/healthz`). `bootstrap` nutzt das Forgejo-Image, aber nicht den Server: Die `forgejo`-CLI arbeitet direkt gegen die Datenbank (Netz `internal`) und liest `app.ini` aus `./data/forgejo`.
+
+**Eingaben** (aus `.env`, vom Compose durchgereicht):
+
+| Variable | Zweck |
+| --- | --- |
+| `FORGEJO_DOMAIN` | E-Mail-Adresse von `renovate-bot` (`renovate@<domain>`) |
+| `FORGEJO_ADMIN_USER` | Name des Admins |
+| `FORGEJO_ADMIN_PASSWORD` | Passwort des Admins |
+| `FORGEJO_ADMIN_EMAIL` | E-Mail des Admins |
+
+Fehlt eine davon, bricht das Skript sofort ab.
+
+**Ablauf von `bootstrap.sh`:**
+
+| Nr. | Schritt | Merker für „schon erledigt“ |
+| --- | --- | --- |
+| 1 | Admin anlegen (`forgejo admin user create --admin ...`, ohne Passwortwechsel-Zwang) | Benutzer steht in `forgejo admin user list` |
+| 2 | Benutzer `renovate-bot` anlegen (normaler Benutzer, Zufallspasswort) | dito |
+| 3 | Access-Token `renovate` für `renovate-bot` erzeugen, Scopes `write:repository,write:issue,read:user,read:organization`, Ausgabe nach `secrets/renovate/renovate_token` | Datei `renovate_token` existiert und ist nicht leer |
+| 4 | Runner-Registrierungs-Token erzeugen (`forgejo forgejo-cli actions generate-runner-token`), Ausgabe nach `secrets/runner/runner_token` | Datei `runner_token` existiert und ist nicht leer |
+
+Details, die das Skript beachtet:
+
+- Die CLI läuft nie als root, sondern per `su-exec 1000:1000`.
+- Tokens werden erst in eine `.tmp`-Datei geschrieben und dann atomar umbenannt. Bei leerer Ausgabe bricht das Skript ab, es bleibt keine halbe Datei zurück.
+- Dateimodi: `runner_token` `600`, `renovate_token` `644` (siehe Schritt A).
+- Das Passwort von `renovate-bot` wird nirgends gespeichert. Es zählt nur der Token.
+
+**Prüfen:**
+
+```bash
+docker compose logs bootstrap
+```
+
+Beim ersten Lauf erwartest du `Lege Admin ... an`, `Lege Benutzer renovate-bot an`, `Erzeuge Access-Token ...`, `Erzeuge Runner-Registrierungs-Token` und `Fertig`. Bei jedem weiteren Lauf stattdessen `... existiert bereits` bzw. `... vorhanden`.
+
+Token testen (liefert die Daten von `renovate-bot`):
+
+```bash
+curl -s -H "Authorization: token $(sudo cat secrets/renovate/renovate_token)" \
+  https://git.example.com/api/v1/user
+```
+
+**Erneut ausführen:** `docker compose run --rm bootstrap`. Das ist gefahrlos, solange Benutzer und Token-Dateien existieren. Zum Neuerzeugen eines Tokens siehe [Token verloren oder neu erzeugen](#token-verloren-oder-neu-erzeugen).
+
+### Schritt C: Runner und Renovate lesen die Tokens
+
+| Dienst | Wartet auf | Token | Verwendung |
+| --- | --- | --- | --- |
+| `runner` | `dind` (gestartet), `bootstrap` (erfolgreich) | `/secrets/runner_token` (aus `./secrets/runner`) | wird nur beim ersten Start für `forgejo-runner register` benutzt, solange `./data/runner/.runner` fehlt |
+| `renovate` | `bootstrap` (erfolgreich) | `/secrets/renovate_token` (aus `./secrets/renovate`) | wird beim Start als `RENOVATE_TOKEN` exportiert |
+
+Die Tokens stehen damit weder in `.env` noch in `docker inspect` des Runners oder Renovates, sondern nur in den gemounteten Dateien.
+
+### Anpassen
+
+- **Andere Token-Rechte für Renovate:** Variable `RENOVATE_SCOPES` in `bootstrap.sh` ändern, dann den Token neu erzeugen (siehe oben). Scopes so eng wie möglich halten.
+- **Weitere Benutzer oder Tokens:** in `bootstrap.sh` nach dem gleichen Muster ergänzen (Existenzprüfung per `user_exists` bzw. Token-Datei als Merker, `write_secret` zum Schreiben) und im `compose.yml` das passende Unterverzeichnis von `./secrets` in den Verbraucher mounten.
+- **Neues Unterverzeichnis für einen weiteren Verbraucher:** in `init-secrets` per `mkdir -p` anlegen und Besitzer/Modus passend zur UID des Verbrauchers setzen.
+- **Nach Änderungen:** `docker compose config -q`, dann `docker compose run --rm bootstrap` und `docker compose logs bootstrap`.
+
+### Sicherheitshinweise
+
+- `FORGEJO_ADMIN_PASSWORD` bleibt in der `.env` und ist im `bootstrap`-Container als Umgebungsvariable sichtbar (`docker inspect forgejo-bootstrap`). `.env` hat deshalb `600`. Nach dem ersten Login das Passwort in Forgejo ändern. Das Skript prüft das Passwort bei jedem Lauf nur auf Vorhandensein, es setzt es bei bestehendem Konto nicht zurück.
+- `secrets/` gehört nicht ins Git (`.gitignore`) und nicht in `docker compose`-Ausgaben oder Tickets. Es wird auch nicht von restic gesichert, sichere es separat (Passwortmanager) oder stelle es mit `docker compose run --rm bootstrap` neu her.
+
+### Fehlersuche bei den Init-Containern
+
+| Symptom | Ursache und Lösung |
+| --- | --- |
+| `init-secrets` bricht ab: `forgejo: not found` oder Befehl unbekannt | Der Tag `FORGEJO_VERSION` liefert ein anderes Image-Layout. Image prüfen (`docker run --rm --entrypoint sh codeberg.org/forgejo/forgejo:<tag> -c 'which forgejo'`) |
+| `forgejo` startet nicht, `permission denied` auf `/secrets/...` | Besitzer oder Modus der Schlüsseldateien stimmt nicht: `docker compose run --rm init-secrets` ausführen, danach `sudo ls -ln secrets/forgejo` (Besitzer 1000) |
+| `forgejo` bleibt `unhealthy` | `docker compose logs forgejo`, siehe [Fehlersuche](#fehlersuche) (u. a. `curl` im Image, Datenbankpasswort) |
+| `bootstrap` wartet ewig oder startet nicht | `forgejo` ist nicht `healthy`: `docker compose ps forgejo` |
+| `bootstrap`: `su-exec`/`bash` nicht gefunden | Das Image enthält die Werkzeuge nicht. `bootstrap.sh` und `entrypoint` im Compose an die Werkzeuge des Images anpassen |
+| `bootstrap`: Option oder Unterbefehl unbekannt | CLI der Forgejo-Version prüfen: `docker compose exec -u git forgejo forgejo admin user --help` und `... forgejo forgejo-cli actions --help` |
+| `bootstrap`: Benutzername reserviert oder ungültig | `FORGEJO_ADMIN_USER` ändern (nicht `admin`), dann `docker compose run --rm bootstrap` |
+| `bootstrap`: Token mit diesem Namen existiert schon | Token-Datei fehlt, der Token in Forgejo aber nicht. `renovate-bot` in Forgejo löschen und `bootstrap` erneut ausführen |
+| `runner`/`renovate` starten nicht, „dependency failed“ | `bootstrap` ist fehlgeschlagen: `docker compose logs bootstrap`, Fehler beheben, `docker compose up -d` |
+| Token-Datei leer | `bootstrap` bricht in diesem Fall ab. Datei löschen und `docker compose run --rm bootstrap` |
 
 ---
 

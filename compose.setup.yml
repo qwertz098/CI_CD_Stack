@@ -1,0 +1,35 @@
+# Setup-UI aus dem ghcr-Image, ohne setup.sh. Im Stack-Ordner ausführen:
+#
+#   docker compose -f compose.setup.yml up
+#
+# Die Konsole zeigt die URL samt Token (http://127.0.0.1:8080/?token=...). Beenden mit
+# Strg+C, danach `docker compose -f compose.setup.yml down`.
+#
+# Wichtig:
+# - Die UI bekommt den Docker-Socket und hat damit Root auf dem Host. Der Port ist nur an
+#   127.0.0.1 gebunden (von außen per SSH-Tunnel), nach dem Setup beenden.
+# - Der Stack-Ordner wird unter demselben Pfad wie auf dem Host gemountet, damit ./data,
+#   ./secrets usw. aus compose.yml für den Docker-Daemon richtig aufgelöst werden.
+# - Anderer Port: SETUP_PORT=9000 docker compose -f compose.setup.yml up
+# - Feste Version statt latest: SETUP_VERSION=0.1.0 ...
+# - Das Paket ghcr.io/qwertz098/ci_cd_stack-setup muss öffentlich sein, sonst vorher
+#   `docker login ghcr.io`.
+
+name: stack-setup
+
+services:
+  setup-ui:
+    image: ghcr.io/qwertz098/ci_cd_stack-setup:${SETUP_VERSION:-latest}
+    container_name: stack-setup
+    restart: "no"
+    working_dir: ${PWD:?Im Stack-Ordner ausführen (PWD fehlt)}
+    environment:
+      STACK_DIR: ${PWD}
+      SETUP_PUBLISHED_PORT: ${SETUP_PORT:-8080}
+      # optional: festes Token statt eines zufälligen pro Start
+      SETUP_TOKEN: ${SETUP_TOKEN:-}
+    ports:
+      - "127.0.0.1:${SETUP_PORT:-8080}:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${PWD}:${PWD}

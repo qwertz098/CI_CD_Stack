@@ -20,7 +20,9 @@ Selbst gehosteter Git-Server mit Container-Registry, npm-Registry und CI, per Do
 ./setup.sh
 ```
 
-Startet eine Weboberfläche auf `127.0.0.1:8080` (Token steht in der Konsole; von außen per SSH-Tunnel). Sie schreibt die `.env`, führt `docker compose up -d` aus und zeigt Ablauf, Logs und Status. Sie bekommt den Docker-Socket und damit Root auf dem Host: nur für das Setup starten und danach mit Strg+C beenden. Das Image `ghcr.io/qwertz098/ci_cd_stack-setup` baut der Workflow `.github/workflows/setup-image.yml`; fehlt es, baut `setup.sh` lokal aus `setup/`. Das Backup ist optional (Profil `backup`).
+Startet eine Weboberfläche auf `127.0.0.1:8080` (Token steht in der Konsole; von außen per SSH-Tunnel). Sie schreibt die `.env`, führt `docker compose up -d` aus und zeigt Ablauf, Logs und Status. Sie bekommt den Docker-Socket und damit Root auf dem Host: nur für das Setup starten und danach mit Strg+C beenden. Das Image `ghcr.io/qwertz098/ci_cd_stack-setup` baut der Workflow `.github/workflows/setup-image.yml`; fehlt es, baut `setup.sh` lokal aus `setup/`.
+
+Ohne `setup.sh` geht es auch per Compose: `docker compose -f compose.setup.yml up` startet dasselbe Image aus ghcr (Datei `compose.setup.yml`, Port per `SETUP_PORT`, Version per `SETUP_VERSION`). Das Paket muss dafür öffentlich sein. Das Backup ist optional (Profil `backup`).
 
 ## Inhalt
 

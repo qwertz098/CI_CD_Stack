@@ -7,23 +7,68 @@ Selbst gehosteter Git-Server mit Container-Registry, npm-Registry und CI, per Do
 - **Renovate**: PRs für veraltete npm-Pakete und Docker-Images
 - **Uptime Kuma**: Monitoring
 - **Backup**: nächtlicher Postgres-Dump, restic schiebt alles verschlüsselt offsite
-- **Reverse Proxy und TLS**: dein bestehender Nginx Proxy Manager (NPM), nicht Teil dieses Stacks
+- **Reverse Proxy und TLS**: ein separater Reverse Proxy, nicht Teil des Basis-Stacks. Standard ist ein bestehender Nginx Proxy Manager (NPM); als Alternative liegt eine fertige **Caddy**-Konfiguration bei
 
 > **Status:** Der Stack ist noch **nicht auf einem Server getestet**. Befehle und Menüpfade unten sind nach bestem Wissen beschrieben; was ausdrücklich ungetestet ist, steht unter [Offene Punkte](#offene-punkte). Am besten zuerst auf einem Testserver durchspielen.
 
 ## Inhalt
 
-1. [Überblick](#überblick)
-2. [Installation Schritt für Schritt](#installation-schritt-für-schritt)
-3. [Init-Container im Detail](#init-container-im-detail)
-4. [Erstes Projekt anbinden](#erstes-projekt-anbinden)
-5. [Release und Deploy](#release-und-deploy)
-6. [Renovate](#renovate)
-7. [Monitoring mit Uptime Kuma](#monitoring-mit-uptime-kuma)
-8. [Backup und Restore](#backup-und-restore)
-9. [Betrieb: Updates, Tokens, Reset](#betrieb-updates-tokens-reset)
-10. [Fehlersuche](#fehlersuche)
-11. [Offene Punkte](#offene-punkte)
+1. [Voraussetzungen und Randbedingungen](#voraussetzungen-und-randbedingungen)
+2. [Überblick](#überblick)
+3. [Installation Schritt für Schritt](#installation-schritt-für-schritt)
+4. [Reverse Proxy: Caddy statt NPM](#reverse-proxy-caddy-statt-npm)
+5. [Init-Container im Detail](#init-container-im-detail)
+6. [Erstes Projekt anbinden](#erstes-projekt-anbinden)
+7. [Release und Deploy](#release-und-deploy)
+8. [Renovate](#renovate)
+9. [Monitoring mit Uptime Kuma](#monitoring-mit-uptime-kuma)
+10. [Backup und Restore](#backup-und-restore)
+11. [Betrieb: Updates, Tokens, Reset](#betrieb-updates-tokens-reset)
+12. [Fehlersuche](#fehlersuche)
+13. [Offene Punkte](#offene-punkte)
+
+---
+
+## Voraussetzungen und Randbedingungen
+
+Der Stack ist für die folgenden Randbedingungen ausgelegt. Passen sie nicht, sind meist kleine Anpassungen in `compose.yml` oder `.env` nötig; die betroffenen Stellen sind jeweils genannt.
+
+### Randbedingungen
+
+| Bereich | Annahme | Wenn es anders ist |
+| --- | --- | --- |
+| Betrieb | ein einzelner Linux-Server mit Docker Engine und Compose v2, Betrieb per Docker Compose, kein Orchestrator | für Kubernetes o. ä. nicht gedacht |
+| Erreichbarkeit | eigene Domain mit DNS-Eintrag auf den Server; Ports 80 und 443 aus dem Internet erreichbar (Zertifikate, Weboberfläche); ein Port für Git über SSH (Standard `2222`) | andere SSH-Ports über `FORGEJO_SSH_PORT`; ohne öffentliche Erreichbarkeit funktionieren Let's-Encrypt-Zertifikate per HTTP-Challenge nicht |
+| Reverse Proxy und TLS | ein **separater** Reverse Proxy terminiert TLS und hängt im gemeinsamen Docker-Netz `proxy`. Standard: bestehender Nginx Proxy Manager (NPM). Alternative: Caddy (siehe [Reverse Proxy: Caddy statt NPM](#reverse-proxy-caddy-statt-npm)) | Netzname über `PROXY_NETWORK` änderbar |
+| Ausgehender Zugriff | der Server erreicht github.com (Actions werden von dort geladen, Renovate liest Changelogs) sowie die Image-Registries (Docker Hub, `ghcr.io`, `codeberg.org`, `code.forgejo.org`) | hinter einer Firewall die Ziele freigeben |
+| CI | Forgejo Actions; Runner mit Docker-in-Docker. Dafür läuft ein **privilegierter** Container (`dind`); der Host-Docker-Socket wird bewusst nicht benutzt | ohne privilegierte Container ist dieses CI-Konzept nicht möglich |
+| Runner und Forgejo | der Runner erreicht Forgejo über die **öffentliche URL**, nicht über das interne Netz | der Reverse Proxy muss vor dem Runner-Start stehen |
+| Deploy | manuell per Git-Tag (`v1.2.3`), danach `docker compose pull && docker compose up -d` auf dem Zielserver; kein Auto-Deploy, kein Watchtower | |
+| Updates | Abhängigkeiten in Projekten per Renovate; Updates dieses Stacks manuell | |
+| Backup | offsite per restic (S3-kompatibel oder SFTP); Datenbank über täglichen Dump | ohne Backup-Ziel `restic` aus `compose.yml` entfernen |
+| Nutzung | kleines Team oder Einzelperson; Registrierung geschlossen, der Admin legt Benutzer an | offene Registrierung: `DISABLE_REGISTRATION` in `compose.yml` ändern |
+| Sprache | Dokumentation und Kommentare auf Deutsch | |
+
+### Das musst du bereithalten
+
+- einen Server mit Docker Engine und Compose-Plugin (`docker compose version`)
+- eine Domain für Forgejo (z. B. `git.example.com`), optional eine zweite für Uptime Kuma (bei Caddy Pflicht)
+- eine E-Mail-Adresse für das Zertifikatskonto (nur bei Caddy)
+- einen Reverse Proxy: einen laufenden NPM **oder** die mitgelieferte Caddy-Konfiguration
+- ein Backup-Ziel für restic samt Zugangsdaten
+- Firewall-Freigaben: 80/tcp, 443/tcp, bei Caddy zusätzlich 443/udp (HTTP/3), sowie der Git-SSH-Port
+
+### Welcher Reverse Proxy?
+
+| | Nginx Proxy Manager (Standard) | Caddy (Alternative) |
+| --- | --- | --- |
+| Voraussetzung | NPM läuft schon (z. B. für andere Dienste) und hängt im Netz `proxy` | nichts Bestehendes nötig; Caddy gehört dann zu diesem Stack |
+| Konfiguration | über die Weboberfläche, von Hand | eine Textdatei (`Caddyfile`), im Repo versioniert |
+| Zertifikate | pro Host in der Oberfläche beantragen | automatisch, inklusive Erneuerung und Weiterleitung HTTP auf HTTPS |
+| Mehrere Dienste auf dem Server | gut geeignet | geeignet, aber dann sollte Caddy auch deine anderen Dienste übernehmen |
+| Beide gleichzeitig | nicht möglich, beide brauchen 80/443 auf demselben Host | |
+
+Faustregel: Gibt es schon einen NPM, bleib dabei. Fängst du neu an oder willst die Proxy-Konfiguration im Git haben, nimm Caddy.
 
 ---
 
@@ -40,6 +85,8 @@ Selbst gehosteter Git-Server mit Container-Registry, npm-Registry und CI, per Do
 | `workflow-ci.yml` | Beispiel-Workflow: lint, test, build |
 | `workflow-release.yml` | Beispiel-Workflow: Tests, Image bauen und in die Forgejo-Registry pushen |
 | `renovate.json` | Vorlage für Projekt-Repos |
+| `compose.caddy.yml` | optional: Caddy-Dienst als Ergänzung zu `compose.yml` |
+| `Caddyfile` | optional: Konfiguration für Caddy |
 | `CLAUDE.md` | Entscheidungen und Hintergründe |
 
 ### Ablauf beim Start
@@ -70,7 +117,7 @@ Es gibt keinen Web-Installer und keine manuellen Token-Schritte. `docker compose
 | Netz | Zweck |
 | --- | --- |
 | `internal` | Forgejo, Postgres, bootstrap, Renovate, Backup |
-| `proxy` (extern) | gemeinsames Netz mit dem NPM; Forgejo und Uptime Kuma hängen darin |
+| `proxy` (extern) | gemeinsames Netz mit dem Reverse Proxy (NPM oder Caddy); Forgejo und Uptime Kuma hängen darin |
 | `forgejo-ci` | Runner, Docker-in-Docker und Job-Container |
 
 ---
@@ -86,12 +133,7 @@ docker --version          # Docker Engine
 docker compose version    # Compose-Plugin, v2
 ```
 
-Außerdem nötig:
-
-- Eine **Domain** für Forgejo (Beispiel: `git.example.com`) mit **DNS-Eintrag** (A/AAAA) auf den Server
-- Ein laufender **Nginx Proxy Manager**, dessen Container im Docker-Netz `proxy` hängt (siehe Schritt 3)
-- Ein **offsite Backup-Ziel** für restic (S3-kompatibel oder SFTP)
-- Eine **offene Firewall-Freigabe** für den Git-SSH-Port (Standard `2222`) sowie 80/443 für den NPM
+Die übrigen Voraussetzungen (Domain, Reverse Proxy, Backup-Ziel, Firewall) stehen unter [Voraussetzungen und Randbedingungen](#voraussetzungen-und-randbedingungen). Gehe sie vor dem Start durch.
 
 ### Schritt 1: Repo auf den Server holen
 
@@ -152,7 +194,7 @@ docker compose config -q && echo OK
 docker network ls --filter name=proxy
 ```
 
-Existiert das Netz nicht, anlegen und den NPM-Container hineinhängen:
+Existiert das Netz nicht, anlegen (bei NPM zusätzlich den NPM-Container hineinhängen; bei Caddy tritt Caddy dem Netz selbst bei):
 
 ```bash
 docker network create proxy
@@ -162,6 +204,8 @@ docker network connect proxy <name-des-npm-containers>
 Heißt dein Netz anders, setze `PROXY_NETWORK` in der `.env` entsprechend.
 
 ### Schritt 4: Stack starten
+
+> **Mit Caddy statt NPM:** Vorher die Schritte aus [Reverse Proxy: Caddy statt NPM](#reverse-proxy-caddy-statt-npm) erledigen (zwei zusätzliche Variablen in der `.env`). Der Startbefehl bleibt derselbe, wenn `COMPOSE_FILE` in der `.env` gesetzt ist.
 
 ```bash
 docker compose up -d
@@ -200,9 +244,13 @@ sudo ls -l secrets secrets/forgejo secrets/runner secrets/renovate
 
 Falls etwas nicht grün ist: [Fehlersuche](#fehlersuche).
 
-### Schritt 5: Proxy-Host im Nginx Proxy Manager anlegen
+### Schritt 5: Reverse Proxy einrichten
 
 Der Runner und Renovate sprechen Forgejo über die öffentliche URL an. Solange der Proxy-Host fehlt, starten sie deshalb neu (`restart: unless-stopped`) und fangen sich, sobald die URL erreichbar ist.
+
+**Variante B (Caddy):** nichts zu tun, die Konfiguration kommt aus dem `Caddyfile`. Weiter mit Schritt 6; Details unter [Reverse Proxy: Caddy statt NPM](#reverse-proxy-caddy-statt-npm).
+
+#### Variante A: Nginx Proxy Manager
 
 Im NPM unter **Hosts > Proxy Hosts > Add Proxy Host**:
 
@@ -267,6 +315,220 @@ Erwartet: `HTTP/2 200`.
    ```
 
    Dann reicht `git clone git@git.example.com:<benutzer>/<repo>.git`.
+
+---
+
+## Reverse Proxy: Caddy statt NPM
+
+Optionale Alternative zum Nginx Proxy Manager. Caddy übernimmt TLS-Zertifikate, Weiterleitung auf HTTPS und die Verteilung der Anfragen an Forgejo und Uptime Kuma. Es ersetzt Schritt 5 der Installation.
+
+### Was dazugehört
+
+| Datei | Zweck |
+| --- | --- |
+| `compose.caddy.yml` | fügt den Dienst `caddy` zum Stack hinzu |
+| `Caddyfile` | die Konfiguration: welche Domain geht an welchen Dienst |
+| `.env` | `STATUS_DOMAIN`, `ACME_EMAIL`, `COMPOSE_FILE` |
+
+Das Basis-`compose.yml` bleibt unverändert. Wer beim NPM bleibt, braucht beide Dateien nicht.
+
+### Einrichtung Schritt für Schritt
+
+1. **NPM stilllegen, falls vorhanden.** Caddy und NPM können nicht gleichzeitig die Ports 80 und 443 belegen. Läuft auf dem Server noch ein NPM für andere Dienste, nimm Caddy nicht oder verschiebe auch diese Dienste in das `Caddyfile`.
+2. **DNS prüfen:** `FORGEJO_DOMAIN` und `STATUS_DOMAIN` (z. B. `git.example.com` und `status.example.com`) zeigen per A/AAAA-Eintrag auf den Server.
+3. **Firewall:** 80/tcp, 443/tcp und 443/udp freigeben (HTTP/3).
+4. **`.env` ergänzen:**
+
+   ```bash
+   STATUS_DOMAIN=status.example.com
+   ACME_EMAIL=du@example.com
+   COMPOSE_FILE=compose.yml:compose.caddy.yml
+   ```
+
+   (`COMPOSE_FILE` ist in `.env.example` auskommentiert vorbereitet. Ohne diese Zeile gibst du bei jedem Aufruf `-f compose.yml -f compose.caddy.yml` an.)
+5. **Proxy-Netz anlegen** (das Basis-`compose.yml` erwartet es als extern): `docker network create proxy`
+6. **Konfiguration prüfen:**
+
+   ```bash
+   docker compose config -q && echo OK
+   docker compose run --rm --no-deps caddy caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+   ```
+
+   Die erste Zeile meldet fehlende Variablen (`STATUS_DOMAIN`, `ACME_EMAIL`), die zweite prüft das `Caddyfile` und sollte `Valid configuration` ausgeben.
+7. **Starten:** `docker compose up -d`
+8. **Zertifikate beobachten:**
+
+   ```bash
+   docker compose logs -f caddy
+   ```
+
+   Erwartet werden Meldungen wie `certificate obtained successfully` für beide Domains. Das dauert beim ersten Start einige Sekunden.
+9. **Testen:**
+
+   ```bash
+   curl -I https://git.example.com
+   curl -I http://git.example.com     # muss auf https weiterleiten
+   ```
+
+### Vollständige Konfiguration
+
+**`compose.caddy.yml`**
+
+```yaml
+# Optionale Ergänzung zu compose.yml: Caddy statt Nginx Proxy Manager.
+#
+# Starten:
+#   docker compose -f compose.yml -f compose.caddy.yml up -d
+# oder dauerhaft in der .env:  COMPOSE_FILE=compose.yml:compose.caddy.yml
+#
+# Caddy hängt im Netz "proxy" und erreicht Forgejo und Uptime Kuma über deren Namen.
+# Das Netz muss vorher existieren:  docker network create proxy
+# Nicht gleichzeitig mit einem NPM auf demselben Host betreiben (beide brauchen 80/443).
+
+services:
+  caddy:
+    image: caddy:2
+    container_name: caddy
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ}
+      FORGEJO_DOMAIN: ${FORGEJO_DOMAIN}
+      STATUS_DOMAIN: ${STATUS_DOMAIN:?STATUS_DOMAIN in der .env setzen (Domain für Uptime Kuma)}
+      ACME_EMAIL: ${ACME_EMAIL:?ACME_EMAIL in der .env setzen}
+    ports:
+      - "80:80"
+      - "443:443"
+      # HTTP/3 (QUIC)
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Zertifikate und ACME-Konto: muss erhalten bleiben (Rate-Limits von Let's Encrypt)
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - forgejo
+      - uptime-kuma
+    networks:
+      - proxy
+
+volumes:
+  caddy-data:
+  caddy-config:
+```
+
+**`Caddyfile`**
+
+```
+# Caddy als Alternative zum Nginx Proxy Manager (siehe README, "Reverse Proxy: Caddy").
+# Alle Werte kommen aus der .env (über compose.caddy.yml als Umgebungsvariablen).
+{
+	# E-Mail für das ACME-Konto (Let's Encrypt): Ablaufwarnungen und Kontowiederherstellung
+	email {$ACME_EMAIL}
+
+	# Zum Testen auskommentieren: Staging-CA von Let's Encrypt (keine Rate-Limits, aber
+	# Zertifikate sind nicht vertrauenswürdig). Danach wieder entfernen und neu laden.
+	# acme_ca https://acme-staging-v02.api.letsencrypt.org/directory
+}
+
+# --- Forgejo: Weboberfläche, Container-Registry, npm-Registry, API ---
+{$FORGEJO_DOMAIN} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		-Server
+	}
+
+	# Websockets laufen automatisch mit. Eine Größenbegrenzung für Uploads gibt es
+	# in Caddy standardmäßig nicht (Registry-Layer sind groß), nichts zu setzen.
+	reverse_proxy forgejo:3000
+}
+
+# --- Uptime Kuma: Monitoring-Oberfläche ---
+{$STATUS_DOMAIN} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		-Server
+	}
+
+	reverse_proxy uptime-kuma:3001
+}
+```
+
+### Wie es funktioniert
+
+**Rolle im Stack.** Caddy nimmt Anfragen aus dem Internet auf Port 80 und 443 entgegen, beendet die TLS-Verschlüsselung und reicht die Anfrage unverschlüsselt über das interne Docker-Netz `proxy` weiter:
+
+```
+Browser / docker / npm ──HTTPS──► caddy :443 ──HTTP──► forgejo :3000
+                                         └────HTTP──► uptime-kuma :3001
+git (SSH) ───────────────────────────────────────────► forgejo :22 (veröffentlicht als 2222, nicht über Caddy)
+```
+
+SSH ist kein HTTP und läuft deshalb direkt an den Forgejo-Container, genau wie beim NPM.
+
+**Aufbau des `Caddyfile`.**
+
+- Der erste Block in `{ ... }` ohne Adresse enthält **globale Optionen**; hier die E-Mail für das Zertifikatskonto.
+- Danach folgt je ein **Site-Block**, dessen Kopf die Domain ist (`{$FORGEJO_DOMAIN}`). Alles darin gilt nur für Anfragen an diese Domain.
+- `{$NAME}` wird beim Laden durch die Umgebungsvariable ersetzt. Die Variablen setzt `compose.caddy.yml` aus der `.env`.
+
+**Automatisches HTTPS.** Eine Domain als Site-Adresse genügt, damit Caddy
+
+1. beim Start ein Zertifikat per ACME bei Let's Encrypt anfordert. Der Nachweis, dass die Domain dir gehört, läuft über Port 80 (HTTP-Challenge) oder 443 (TLS-ALPN-Challenge). Deshalb müssen DNS und Ports stimmen.
+2. das Zertifikat speichert (Volume `caddy-data`, `/data` im Container) und rechtzeitig vor Ablauf selbst erneuert.
+3. Port 80 automatisch auf HTTPS umleitet.
+
+Das Volume `caddy-data` darf nicht verloren gehen: Bei jedem Neuaufbau ohne Volume würden Zertifikate neu angefordert, und Let's Encrypt begrenzt das (Rate-Limits). Das Volume wird nicht von restic gesichert; bei Verlust holt sich Caddy neue Zertifikate. Zum Testen eignet sich die Staging-CA (auskommentierte Zeile `acme_ca` im `Caddyfile`).
+
+**Weiterleitung (`reverse_proxy`).** `reverse_proxy forgejo:3000` schickt die Anfrage an den Container `forgejo`. Der Name wird über den Docker-DNS im gemeinsamen Netz `proxy` aufgelöst, deshalb muss Caddy in diesem Netz hängen. Caddy setzt dabei automatisch die Header `X-Forwarded-For`, `X-Forwarded-Proto` und `X-Forwarded-Host`. Forgejo kennt seine öffentliche Adresse über `ROOT_URL`. In den Forgejo-Logs erscheint als Client-Adresse die Docker-Adresse von Caddy, nicht die echte IP.
+
+**Websockets und große Uploads.** Websockets (für Uptime Kuma und die Forgejo-Oberfläche) erkennt und leitet Caddy ohne Zusatzeinstellung durch. Eine Obergrenze für die Größe von Anfragen gibt es standardmäßig nicht. Das Gegenstück zu `client_max_body_size 0;` im NPM ist also, nichts zu setzen. Container-Layer für die Registry lassen sich deshalb ohne Sonderregel hochladen.
+
+**Die übrigen Direktiven.**
+
+| Direktive | Wirkung |
+| --- | --- |
+| `encode zstd gzip` | komprimiert Antworten, soweit der Client es unterstützt |
+| `header Strict-Transport-Security "max-age=31536000"` | Browser nutzen für ein Jahr nur noch HTTPS für diese Domain. Erst setzen, wenn HTTPS dauerhaft funktioniert |
+| `header X-Content-Type-Options "nosniff"` | verhindert MIME-Raten im Browser |
+| `header -Server` | entfernt den Server-Header der Antwort |
+
+**HTTP/3.** Die Zeile `443:443/udp` veröffentlicht den UDP-Port für QUIC. Fällt der Client darauf zurück, geht es normal über TCP.
+
+### Betrieb
+
+| Aufgabe | Befehl |
+| --- | --- |
+| `Caddyfile` nach Änderung ohne Ausfall neu laden | `docker compose exec -w /etc/caddy caddy caddy reload --config /etc/caddy/Caddyfile` |
+| Datei vorher prüfen | `docker compose run --rm --no-deps caddy caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile` |
+| Logs ansehen | `docker compose logs -f caddy` |
+| Caddy aktualisieren | `docker compose pull caddy && docker compose up -d caddy` |
+
+### Wechsel von NPM zu Caddy
+
+1. Backup prüfen. Forgejo selbst bleibt unverändert, `ROOT_URL` und Domain bleiben gleich.
+2. `.env` ergänzen und `Caddyfile` prüfen (Schritte 4 bis 6 oben).
+3. NPM stoppen, damit 80/443 frei werden: `docker stop <npm-container>`.
+4. `docker compose up -d`. Caddy holt die Zertifikate neu.
+5. Test: Weboberfläche, `git push` über SSH und `docker login git.example.com` prüfen. Runner und Renovate erreichen Forgejo weiter über die öffentliche URL.
+
+Zurück zu NPM: `COMPOSE_FILE` aus der `.env` entfernen, `docker compose up -d --remove-orphans`, NPM wieder starten.
+
+### Fehlersuche bei Caddy
+
+| Symptom | Ursache und Lösung |
+| --- | --- |
+| `docker compose config` meldet `STATUS_DOMAIN`/`ACME_EMAIL` fehle | Variablen in der `.env` setzen |
+| Caddy startet nicht: `address already in use` | Port 80 oder 443 ist belegt, meist läuft noch der NPM oder ein anderer Webserver (`sudo ss -ltnp \| grep ':80\|:443'`) |
+| Kein Zertifikat, Logs zeigen ACME-Fehler | DNS zeigt nicht auf den Server, Port 80/443 von außen gesperrt, oder Rate-Limit erreicht. Mit der Staging-CA testen |
+| `502 Bad Gateway` | `forgejo` bzw. `uptime-kuma` läuft nicht oder ist nicht im Netz `proxy`: `docker compose ps`, `docker network inspect proxy` |
+| Browser zeigt Zertifikatswarnung | Staging-CA ist noch aktiv; `acme_ca`-Zeile entfernen, neu laden |
+| Registry-Push scheitert mit 413 | tritt bei Caddy normalerweise nicht auf; prüfen, ob davor noch ein anderer Proxy sitzt |
 
 ---
 
@@ -524,7 +786,7 @@ Ohne `renovate.json` im Repo öffnet Renovate zuerst einen „Configure Renovate
 
 ## Monitoring mit Uptime Kuma
 
-Uptime Kuma hängt im Netz `proxy`, hat aber **keinen** Proxy-Host. Einrichten:
+Uptime Kuma hängt im Netz `proxy`, hat aber im Basis-Stack **keinen** Proxy-Host. Bei Caddy ist er über `STATUS_DOMAIN` bereits konfiguriert, dann ab Punkt 2. Mit NPM:
 
 1. Im NPM einen weiteren Proxy-Host anlegen, z. B. `status.example.com` auf Host `uptime-kuma`, Port `3001`, Websockets **an**, SSL wie oben.
 2. `https://status.example.com` öffnen. **Sofort** den Admin-Benutzer anlegen, denn der erste Besucher wird Admin.
@@ -549,7 +811,7 @@ Uptime Kuma hängt im Netz `proxy`, hat aber **keinen** Proxy-Host. Einrichten:
 
 Das laufende `data/postgres` wird bewusst nicht gesichert, nur der konsistente Dump. Nicht gesichert werden außerdem `secrets/` und `.env`. Beides gehört separat in deinen Passwortmanager (mindestens `.env`, vor allem `RESTIC_PASSWORD`). `SECRET_KEY` und `INTERNAL_TOKEN` landen vermutlich zusätzlich in `data/forgejo/gitea/conf/app.ini` und wären damit im Backup (ungetestet, beim Restore prüfen).
 
-Bei SFTP-Zielen (z. B. Storage Box) muss zusätzlich ein SSH-Key in den `restic`-Container gemountet werden; das ist in `compose.yml` nicht vorbereitet.
+Das Caddy-Volume `caddy-data` (Zertifikate) wird nicht gesichert; Caddy beschafft Zertifikate bei Verlust neu. Bei SFTP-Zielen (z. B. Storage Box) muss zusätzlich ein SSH-Key in den `restic`-Container gemountet werden; das ist in `compose.yml` nicht vorbereitet.
 
 ### Backup prüfen
 
@@ -667,6 +929,7 @@ Noch nicht auf einem Server getestet. Vor dem produktiven Einsatz auf einem Test
 - Dateirechte der Bind-Mounts unter `./data` (UID 1000 für Forgejo)
 - restic: ob das Repository automatisch angelegt wird, und der Restore-Ablauf
 - Neuerzeugung von Tokens mit `docker compose run --rm bootstrap`
+- Caddy: `Caddyfile` ist mit `caddy validate` (v2.10.0) geprüft, `compose.caddy.yml` mit `docker compose config`. Ein echter Lauf mit Domain, Zertifikat und Weiterleitung auf Forgejo ist ungetestet
 - Menünamen in Forgejo und NPM sind sinngemäß beschrieben und können je nach Version und Sprache leicht abweichen
 
 Weitere Entscheidungen und Hintergründe stehen in `CLAUDE.md`.

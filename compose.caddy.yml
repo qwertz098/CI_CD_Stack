@@ -1,0 +1,39 @@
+# Optionale Ergänzung zu compose.yml: Caddy statt Nginx Proxy Manager.
+#
+# Starten:
+#   docker compose -f compose.yml -f compose.caddy.yml up -d
+# oder dauerhaft in der .env:  COMPOSE_FILE=compose.yml:compose.caddy.yml
+#
+# Caddy hängt im Netz "proxy" und erreicht Forgejo und Uptime Kuma über deren Namen.
+# Das Netz muss vorher existieren:  docker network create proxy
+# Nicht gleichzeitig mit einem NPM auf demselben Host betreiben (beide brauchen 80/443).
+
+services:
+  caddy:
+    image: caddy:2
+    container_name: caddy
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ}
+      FORGEJO_DOMAIN: ${FORGEJO_DOMAIN}
+      STATUS_DOMAIN: ${STATUS_DOMAIN:?STATUS_DOMAIN in der .env setzen (Domain für Uptime Kuma)}
+      ACME_EMAIL: ${ACME_EMAIL:?ACME_EMAIL in der .env setzen}
+    ports:
+      - "80:80"
+      - "443:443"
+      # HTTP/3 (QUIC)
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Zertifikate und ACME-Konto: muss erhalten bleiben (Rate-Limits von Let's Encrypt)
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - forgejo
+      - uptime-kuma
+    networks:
+      - proxy
+
+volumes:
+  caddy-data:
+  caddy-config:

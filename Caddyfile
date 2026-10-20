@@ -1,0 +1,38 @@
+# Caddy als Alternative zum Nginx Proxy Manager (siehe README, "Reverse Proxy: Caddy").
+# Alle Werte kommen aus der .env (über compose.caddy.yml als Umgebungsvariablen).
+{
+	# E-Mail für das ACME-Konto (Let's Encrypt): Ablaufwarnungen und Kontowiederherstellung
+	email {$ACME_EMAIL}
+
+	# Zum Testen auskommentieren: Staging-CA von Let's Encrypt (keine Rate-Limits, aber
+	# Zertifikate sind nicht vertrauenswürdig). Danach wieder entfernen und neu laden.
+	# acme_ca https://acme-staging-v02.api.letsencrypt.org/directory
+}
+
+# --- Forgejo: Weboberfläche, Container-Registry, npm-Registry, API ---
+{$FORGEJO_DOMAIN} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		-Server
+	}
+
+	# Websockets laufen automatisch mit. Eine Größenbegrenzung für Uploads gibt es
+	# in Caddy standardmäßig nicht (Registry-Layer sind groß), nichts zu setzen.
+	reverse_proxy forgejo:3000
+}
+
+# --- Uptime Kuma: Monitoring-Oberfläche ---
+{$STATUS_DOMAIN} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		-Server
+	}
+
+	reverse_proxy uptime-kuma:3001
+}

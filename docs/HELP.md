@@ -45,7 +45,7 @@ You need a Linux server with Docker and the Compose plugin, a domain pointing at
 
 ### With the setup UI (recommended)
 
-1. On the server, in the stack directory, run `./setup.sh`.
+1. On the server, in the stack directory, run `./setup.sh`, or `docker compose -f compose.setup.yml up` (same UI from the ghcr image; stop it with `Ctrl+C` and `docker compose -f compose.setup.yml down`).
 2. Open the printed URL. It contains a one-time token. From your own machine use an SSH tunnel: `ssh -L 8080:127.0.0.1:8080 user@server`.
 3. **Configure**: fill in domain, admin, proxy and optionally backup. Save. A generated admin password is shown once.
 4. **Setup**: the preflight checks Docker, files and the proxy network. Create the network if it is missing, then press *Start setup*. Progress and logs update live.

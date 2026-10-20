@@ -6,10 +6,21 @@ Selbst gehosteter Git-Server mit Container-Registry, npm-Registry und CI, per Do
 - **Forgejo Actions** (GitHub-Actions-kompatibel): Runner mit Docker-in-Docker, kein Zugriff auf den Host-Docker
 - **Renovate**: PRs für veraltete npm-Pakete und Docker-Images
 - **Uptime Kuma**: Monitoring
-- **Backup**: nächtlicher Postgres-Dump, restic schiebt alles verschlüsselt offsite
+- **Backup** (optional): nächtlicher Postgres-Dump, restic schiebt alles verschlüsselt offsite
+- **Setup-UI**: Weboberfläche zum Konfigurieren, Aufbauen und Beobachten des Stacks (`./setup.sh`)
 - **Reverse Proxy und TLS**: ein separater Reverse Proxy, nicht Teil des Basis-Stacks. Standard ist ein bestehender Nginx Proxy Manager (NPM); als Alternative liegt eine fertige **Caddy**-Konfiguration bei
 
 > **Status:** Der Stack ist noch **nicht auf einem Server getestet**. Befehle und Menüpfade unten sind nach bestem Wissen beschrieben; was ausdrücklich ungetestet ist, steht unter [Offene Punkte](#offene-punkte). Am besten zuerst auf einem Testserver durchspielen.
+
+**Hilfe:** Beschreibung, Arbeitsweise, CI/CD-Anleitung und Hinweise für LLM-Agenten stehen in [`docs/HELP.md`](docs/HELP.md) (Englisch). Die Setup-UI zeigt sie im Reiter *Help*.
+
+### Setup-UI
+
+```
+./setup.sh
+```
+
+Startet eine Weboberfläche auf `127.0.0.1:8080` (Token steht in der Konsole; von außen per SSH-Tunnel). Sie schreibt die `.env`, führt `docker compose up -d` aus und zeigt Ablauf, Logs und Status. Sie bekommt den Docker-Socket und damit Root auf dem Host: nur für das Setup starten und danach mit Strg+C beenden. Das Image `ghcr.io/qwertz098/ci_cd_stack-setup` baut der Workflow `.github/workflows/setup-image.yml`; fehlt es, baut `setup.sh` lokal aus `setup/`. Das Backup ist optional (Profil `backup`).
 
 ## Inhalt
 

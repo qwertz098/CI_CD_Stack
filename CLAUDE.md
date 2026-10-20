@@ -9,6 +9,9 @@ Selbst gehosteter Forgejo-Stack per Docker Compose als Cloud-Repo für Claude-Co
 
 ## Dateien
 - `README.md`: Überblick, Schnellstart, Betrieb
+- `docs/HELP.md`: Hilfe (Englisch): Zweck, Arbeitsweise, CI/CD-Anleitung, Abschnitt für LLM-Agenten; wird in der Setup-UI angezeigt
+- `setup.sh`, `setup/`: Setup-UI (Python, nur Standardbibliothek; `app.py`, `static/index.html`, `Dockerfile`). Schreibt `.env`, startet `docker compose up -d`, zeigt Live-Status. UI-Texte Englisch
+- `.github/workflows/setup-image.yml`: baut das UI-Image nach ghcr.io
 - `compose.yml`: Stack (init-secrets, Forgejo, Postgres, bootstrap, dind, Runner, Renovate, Uptime Kuma, db-dump, restic)
 - `compose.caddy.yml` und `Caddyfile`: optionale Alternative zum NPM (Caddy mit automatischem HTTPS für Forgejo und Uptime Kuma)
 - `bootstrap.sh`: idempotentes Setup nach dem Forgejo-Start (Admin, `renovate-bot`, Tokens)
@@ -28,7 +31,13 @@ Selbst gehosteter Forgejo-Stack per Docker Compose als Cloud-Repo für Claude-Co
 - Admin-Zugangsdaten (`FORGEJO_ADMIN_*`) stehen in `.env`; `renovate-bot` bekommt ein Zufallspasswort, nur der Token zählt
 - Token verloren: Datei in `./secrets/...` löschen und `docker compose run --rm bootstrap` (beim Renovate-Token vorher den Benutzer `renovate-bot` in Forgejo löschen, damit der Token-Name frei wird)
 
+- Setup-UI: eigener Container mit Docker-Socket, nur an 127.0.0.1, Token pro Start, nach dem Setup beenden. Der Stack-Ordner wird unter dem Host-Pfad gemountet, damit `./data` usw. für den Daemon stimmen
+- Backup ist optional: `db-dump` und `restic` hängen am Profil `backup` (`COMPOSE_PROFILES=backup` in der `.env`)
+- Container-Namen tragen das Präfix `STACK_NAME` (Vorgabe `forgejo`); das Netz `forgejo-ci` bleibt fest benannt
+
 ## Offene Punkte
+- Setup-UI nur ohne Docker-Daemon getestet (API, `.env`-Schreiben, Oberfläche); der echte Lauf gegen Docker steht aus
+
 - Image-Tags `FORGEJO_VERSION` und `RUNNER_VERSION` gegen die Registries prüfen (Platzhalter, nicht verifiziert)
 - Healthcheck von Forgejo (`curl`) ist eingebaut, aber ungetestet; falls `curl` im Image fehlt, `wget` oder Alternative nehmen
 - Init-Container im Test verifizieren (nicht gelaufen): `forgejo generate secret`, `forgejo admin user create/list`, `forgejo forgejo-cli actions generate-runner-token`, `generate-access-token --raw`, `su-exec` und `bash` im Image, `__FILE`-Variablen, Healthcheck-Pfad `/api/healthz`

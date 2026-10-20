@@ -241,8 +241,10 @@ services:
       - proxy
 
   # -------------------------------------------------------------- Backup
+  # Optional: nur aktiv mit COMPOSE_PROFILES=backup in der .env (die Setup-UI setzt das).
   # 1) konsistenter nächtlicher Postgres-Dump in ./backup/db
   db-dump:
+    profiles: ["backup"]
     image: prodrigestivill/postgres-backup-local:16
     container_name: ${STACK_NAME:-forgejo}-db-dump
     restart: unless-stopped
@@ -267,6 +269,7 @@ services:
   # 2) restic schiebt Dumps + Forgejo-Daten verschlüsselt ins Offsite-Ziel.
   #    Die laufende Postgres-Datei (data/postgres) wird bewusst NICHT gesichert.
   restic:
+    profiles: ["backup"]
     image: mazzolino/restic:1.7
     container_name: ${STACK_NAME:-forgejo}-restic
     restart: unless-stopped
@@ -276,8 +279,8 @@ services:
       BACKUP_CRON: "0 30 3 * * *"
       PRUNE_CRON: "0 0 5 * * 0"
       CHECK_CRON: "0 0 6 * * 0"
-      RESTIC_REPOSITORY: ${RESTIC_REPOSITORY}
-      RESTIC_PASSWORD: ${RESTIC_PASSWORD}
+      RESTIC_REPOSITORY: ${RESTIC_REPOSITORY:-}
+      RESTIC_PASSWORD: ${RESTIC_PASSWORD:-}
       RESTIC_BACKUP_SOURCES: /source
       RESTIC_FORGET_ARGS: "--keep-daily 7 --keep-weekly 4 --keep-monthly 6"
       # für S3-kompatible Ziele (bei SFTP/Storage Box stattdessen SSH-Key mounten)

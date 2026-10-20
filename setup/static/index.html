@@ -1,0 +1,499 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Forgejo Stack Setup</title>
+<style>
+:root{
+  --bg:#f4f5f3; --surface:#fff; --fg:#1d2420; --muted:#667068; --line:#dde1dc;
+  --accent:#1f6f5c; --accent-fg:#fff; --ok:#1f8a4c; --warn:#b7791f; --bad:#c0392b; --run:#2563a8;
+  --code-bg:#14201b; --code-fg:#cfe6da;
+  --font-ui:system-ui,-apple-system,"Segoe UI",sans-serif;
+  --font-mono:ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#101612; --surface:#18201b; --fg:#e6ece8; --muted:#92a097; --line:#27332c;
+  --accent:#4fb89b; --accent-fg:#08130e; --ok:#4cc27d; --warn:#e0a94a; --bad:#ec7a6c; --run:#6fa8e8;
+  --code-bg:#0b110e; --code-fg:#bcd8ca; color-scheme:dark}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 var(--font-ui);padding:16px}
+.wrap{max-width:1000px;margin:0 auto;display:flex;flex-direction:column;gap:16px}
+h1{font-size:18px;margin:0}
+h2{font-size:15px;margin:0 0 12px}
+header{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;justify-content:space-between}
+nav{display:flex;gap:4px;border-bottom:1px solid var(--line);overflow-x:auto}
+nav button{font:inherit;background:none;border:0;color:var(--muted);padding:10px 14px;cursor:pointer;border-bottom:2px solid transparent;white-space:nowrap}
+nav button[aria-selected=true]{color:var(--fg);font-weight:600;border-bottom-color:var(--accent)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:20px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px 24px}
+fieldset{border:0;margin:0;padding:0;display:flex;flex-direction:column;gap:12px;min-width:0}
+legend{font:11px var(--font-mono);letter-spacing:.06em;text-transform:uppercase;color:var(--muted);padding:0;margin-bottom:12px}
+label{display:flex;flex-direction:column;gap:4px;font-weight:500;min-width:0}
+label small,.hint{font-weight:400;color:var(--muted);font-size:13px}
+input,select{font:inherit;color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:4px;padding:8px 10px;width:100%;min-width:0}
+input.err,select.err{border-color:var(--bad)}
+.errmsg{color:var(--bad);font-size:12px;font-weight:400}
+.mono{font-family:var(--font-mono)}
+.row{display:flex;gap:8px}.row>*{flex:1}.row>button{flex:0 0 auto}
+button.btn{font:inherit;font-weight:500;border:1px solid var(--line);background:var(--surface);color:var(--fg);border-radius:4px;padding:8px 14px;cursor:pointer}
+button.primary{background:var(--accent);color:var(--accent-fg);border-color:var(--accent)}
+button:disabled{opacity:.5;cursor:default}
+details>summary{cursor:pointer;color:var(--muted)}
+.actions{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;margin-top:20px;padding-top:16px;border-top:1px solid var(--line)}
+.split{display:grid;grid-template-columns:minmax(0,5fr) minmax(0,7fr);gap:16px}
+@media(max-width:760px){.split{grid-template-columns:minmax(0,1fr)}}
+.checks,.steps{list-style:none;margin:0;padding:0}
+.checks li,.steps li{display:grid;grid-template-columns:20px 1fr auto;gap:12px;align-items:center;padding:8px 0;border-bottom:1px solid var(--line)}
+.checks li:last-child,.steps li:last-child{border-bottom:0}
+.dot{width:12px;height:12px;border-radius:50%;border:2px solid var(--muted);justify-self:center}
+.ok .dot{background:var(--ok);border-color:var(--ok)}
+.run .dot{border-color:var(--run);border-top-color:transparent;animation:spin .9s linear infinite}
+.fail .dot{background:var(--bad);border-color:var(--bad)}
+@keyframes spin{to{transform:rotate(360deg)}}
+@media(prefers-reduced-motion:reduce){.run .dot{animation:none;background:var(--run)}}
+.dep{display:block;color:var(--muted);font:12px var(--font-mono)}
+.state{font:12px var(--font-mono);color:var(--muted)}
+.ok .state{color:var(--ok)}.run .state{color:var(--run)}.fail .state{color:var(--bad)}
+.logtabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}
+.logtabs button{font:12px var(--font-mono);padding:3px 8px;border-radius:4px;border:1px solid var(--line);background:none;color:var(--muted);cursor:pointer}
+.logtabs button[aria-pressed=true]{color:var(--fg);border-color:var(--accent)}
+.log{font:12px/1.6 var(--font-mono);background:var(--code-bg);color:var(--code-fg);padding:12px 14px;border-radius:4px;height:340px;overflow:auto;white-space:pre-wrap;word-break:break-word}
+table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
+th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);white-space:nowrap}
+th{font:11px var(--font-mono);letter-spacing:.05em;text-transform:uppercase;color:var(--muted);font-weight:400}
+.scroll{overflow-x:auto}
+.pill{font:11px var(--font-mono);padding:1px 8px;border-radius:10px;border:1px solid currentColor}
+.pill.ok{color:var(--ok)}.pill.warn{color:var(--warn)}.pill.fail{color:var(--bad)}.pill.mute{color:var(--muted)}
+.banner{border:1px solid var(--warn);border-radius:6px;padding:12px 14px;margin-bottom:16px;background:var(--surface)}
+.banner code,.help code{font-family:var(--font-mono);background:var(--bg);padding:1px 5px;border-radius:3px}
+.banner.good{border-color:var(--ok)}
+/* Hilfe */
+.help-layout{display:grid;grid-template-columns:200px minmax(0,1fr);gap:24px}
+@media(max-width:760px){.help-layout{grid-template-columns:minmax(0,1fr)}}
+.toc{display:flex;flex-direction:column;gap:4px;position:sticky;top:8px;align-self:start}
+.toc a{color:var(--muted);text-decoration:none;font-size:13px;cursor:pointer}
+.toc a:hover{color:var(--fg)}
+.help{min-width:0;max-width:78ch}
+.help h1{font-size:22px}.help h2{font-size:17px;margin-top:28px}.help h3{font-size:15px;margin-top:20px}
+.help pre{background:var(--code-bg);color:var(--code-fg);padding:12px 14px;border-radius:4px;overflow-x:auto;font:12px/1.5 var(--font-mono)}
+.help table{display:block;overflow-x:auto}
+.help a{color:var(--accent)}
+.hidden{display:none!important}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Forgejo Stack Setup</h1>
+    <span class="hint">Git, container registry, npm registry and CI on your own server</span>
+  </header>
+  <nav role="tablist" aria-label="Sections">
+    <button role="tab" data-tab="configure" aria-selected="true">1 Configure</button>
+    <button role="tab" data-tab="setup" aria-selected="false">2 Setup</button>
+    <button role="tab" data-tab="status" aria-selected="false">3 Status</button>
+    <button role="tab" data-tab="help" aria-selected="false">Help</button>
+  </nav>
+
+  <!-- Configure -->
+  <section id="configure" class="panel">
+    <div id="banner-saved" class="banner good hidden" role="status"></div>
+    <form id="form" novalidate>
+      <div class="grid">
+        <fieldset>
+          <legend>Forgejo</legend>
+          <label>Domain<small>Public address, also used by the runner and Renovate</small>
+            <input id="FORGEJO_DOMAIN" class="mono" autocomplete="off"></label>
+          <label>Forgejo version<small>Image tag. "latest" also pulls major upgrades and database migrations; pin a major version for production.</small>
+            <input id="FORGEJO_VERSION" class="mono" list="versions" autocomplete="off"></label>
+          <datalist id="versions"><option value="11"><option value="12"><option value="latest"></datalist>
+          <label>Time zone<select id="TZ"></select></label>
+        </fieldset>
+        <fieldset>
+          <legend>Admin</legend>
+          <label>Username<input id="FORGEJO_ADMIN_USER" class="mono" autocomplete="off"></label>
+          <label>E-mail<input id="FORGEJO_ADMIN_EMAIL" type="email" autocomplete="off"></label>
+          <label>Password<small id="pw-hint">Leave empty to generate one (shown once after saving)</small>
+            <div class="row"><input id="FORGEJO_ADMIN_PASSWORD" type="password" class="mono" autocomplete="new-password">
+            <button type="button" class="btn" id="gen">Generate</button></div></label>
+        </fieldset>
+        <fieldset>
+          <legend>Reverse proxy</legend>
+          <label>Proxy<select id="PROXY"><option value="npm">Existing Nginx Proxy Manager</option><option value="caddy">Caddy (included, automatic HTTPS)</option></select></label>
+          <label>Docker network of the proxy<small>Any name, but the network must exist. Forgejo joins it so the proxy reaches it by container name.</small>
+            <input id="PROXY_NETWORK" class="mono" list="nets" autocomplete="off"></label>
+          <datalist id="nets"></datalist>
+          <div id="caddy-fields" class="hidden" style="display:flex;flex-direction:column;gap:12px">
+            <label>Domain for Uptime Kuma<input id="STATUS_DOMAIN" class="mono" autocomplete="off"></label>
+            <label>E-mail for Let's Encrypt<input id="ACME_EMAIL" type="email" autocomplete="off"></label>
+          </div>
+        </fieldset>
+        <fieldset>
+          <legend>Backup <span style="text-transform:none">(optional)</span></legend>
+          <label style="flex-direction:row;align-items:center;gap:8px"><input id="BACKUP" type="checkbox" style="width:auto"> Enable nightly database dump and offsite backup (restic)</label>
+          <div id="backup-fields" class="hidden" style="display:flex;flex-direction:column;gap:12px">
+            <label>Repository<small>e.g. s3:https://s3.example.com/bucket or sftp:user@host:/restic</small><input id="RESTIC_REPOSITORY" class="mono" autocomplete="off"></label>
+            <label>Repository password<small>Empty = keep or generate. Store it safely: without it the backup is unreadable.</small>
+              <input id="RESTIC_PASSWORD" type="password" class="mono" autocomplete="new-password"></label>
+            <label>S3 access key (S3 targets only)<input id="AWS_ACCESS_KEY_ID" type="password" class="mono" autocomplete="off"></label>
+            <label>S3 secret key<input id="AWS_SECRET_ACCESS_KEY" type="password" class="mono" autocomplete="off"></label>
+          </div>
+        </fieldset>
+      </div>
+      <details style="margin-top:20px">
+        <summary>Advanced</summary>
+        <div class="grid" style="margin-top:12px">
+          <label>Stack name<small>Prefix for container names. Avoids clashes with other stacks in a shared network.</small><input id="STACK_NAME" class="mono" autocomplete="off"></label>
+          <label>Git SSH port on the host<small>Must be free on the host</small><input id="FORGEJO_SSH_PORT" class="mono" autocomplete="off"></label>
+          <label>Runner version<input id="RUNNER_VERSION" class="mono" autocomplete="off"></label>
+          <label>Runner name<input id="RUNNER_NAME" class="mono" autocomplete="off"></label>
+          <label>Database password<small>Empty = keep or generate</small><input id="POSTGRES_PASSWORD" type="password" class="mono" autocomplete="new-password"></label>
+          <label>GitHub token for Renovate (optional)<small>Avoids GitHub rate limits when fetching changelogs</small><input id="RENOVATE_GITHUB_COM_TOKEN" type="password" class="mono" autocomplete="off"></label>
+        </div>
+      </details>
+      <div class="actions">
+        <span class="hint">Writes <code>.env</code> (mode 600). An existing file is kept as <code>.env.bak</code>.</span>
+        <span style="display:flex;gap:8px;flex-wrap:wrap">
+          <button type="submit" class="btn" id="save">Save</button>
+          <button type="button" class="btn primary" id="save-go">Save and continue</button>
+        </span>
+      </div>
+    </form>
+  </section>
+
+  <!-- Setup -->
+  <section id="setup" class="hidden">
+    <div id="banner-done" class="banner good hidden" role="status"></div>
+    <div class="split">
+      <div class="panel">
+        <h2>Preflight</h2>
+        <ul class="checks" id="checks"></ul>
+        <div class="actions" style="margin-top:12px">
+          <button class="btn" id="recheck">Check again</button>
+          <button class="btn primary" id="start">Start setup</button>
+        </div>
+        <h2 style="margin-top:20px">Progress</h2>
+        <ul class="steps" id="steps"></ul>
+        <p class="hint" id="jobhint">Not started.</p>
+      </div>
+      <div class="panel">
+        <h2>Log</h2>
+        <div class="logtabs" id="logtabs"></div>
+        <div class="log" id="log" role="log"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Status -->
+  <section id="status" class="panel hidden">
+    <h2>Containers</h2>
+    <div class="scroll"><table>
+      <thead><tr><th>Service</th><th>Status</th><th>CPU</th><th>Memory</th><th>Details</th></tr></thead>
+      <tbody id="status-body"><tr><td colspan="5" class="hint">Nothing running yet. Start the setup first.</td></tr></tbody>
+    </table></div>
+    <p class="hint">CPU and memory refresh every 5 seconds while this tab is open.</p>
+  </section>
+
+  <!-- Help -->
+  <section id="help" class="panel hidden">
+    <div class="help-layout"><nav class="toc" id="toc" aria-label="Help contents"></nav><div class="help" id="helpbody">Loading ...</div></div>
+  </section>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  var $ = function (id) { return document.getElementById(id); };
+  var HDR = { "X-Requested-With": "stack-setup", "Content-Type": "application/json" };
+  var TABS = ["configure", "setup", "status", "help"];
+  var TEXT_KEYS = ["FORGEJO_DOMAIN","FORGEJO_VERSION","TZ","FORGEJO_ADMIN_USER","FORGEJO_ADMIN_EMAIL","PROXY","PROXY_NETWORK",
+    "STATUS_DOMAIN","ACME_EMAIL","RESTIC_REPOSITORY","STACK_NAME","FORGEJO_SSH_PORT","RUNNER_VERSION","RUNNER_NAME"];
+  var SECRET_KEYS = ["FORGEJO_ADMIN_PASSWORD","POSTGRES_PASSWORD","RESTIC_PASSWORD","AWS_ACCESS_KEY_ID","AWS_SECRET_ACCESS_KEY","RENOVATE_GITHUB_COM_TOKEN"];
+  var ZONES = ["UTC","America/Los_Angeles","America/New_York","America/Sao_Paulo","Europe/London","Europe/Berlin","Europe/Istanbul",
+    "Asia/Dubai","Asia/Kolkata","Asia/Singapore","Asia/Tokyo","Australia/Sydney","Pacific/Auckland"];
+  var domain = "";
+
+  function api(path, opts) {
+    return fetch(path, Object.assign({ credentials: "same-origin" }, opts || {})).then(function (r) {
+      return r.json().catch(function () { return {}; }).then(function (j) { j._status = r.status; return j; });
+    });
+  }
+  function post(path, body) { return api(path, { method: "POST", headers: HDR, body: JSON.stringify(body || {}) }); }
+  function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+
+  // ---------------------------------------------------------------- Tabs
+  function show(id) {
+    if (TABS.indexOf(id) < 0) id = "configure";
+    TABS.forEach(function (t) {
+      $(t).classList.toggle("hidden", t !== id);
+      document.querySelector('[data-tab="' + t + '"]').setAttribute("aria-selected", t === id ? "true" : "false");
+    });
+    try { history.replaceState(null, "", "#" + id); } catch (e) { /* ignorieren */ }
+    if (id === "setup") { runPreflight(); }
+    if (id === "help") { loadHelp(); }
+    if (id === "status") { pollStats(); }
+  }
+  document.querySelectorAll("nav button").forEach(function (b) { b.addEventListener("click", function () { show(b.dataset.tab); }); });
+
+  // --------------------------------------------------------- Konfiguration
+  var zoneSel = $("TZ");
+  ZONES.forEach(function (z) { var o = el("option", "", z); zoneSel.appendChild(o); });
+
+  function toggleConditional() {
+    $("caddy-fields").classList.toggle("hidden", $("PROXY").value !== "caddy");
+    $("backup-fields").classList.toggle("hidden", !$("BACKUP").checked);
+  }
+  $("PROXY").addEventListener("change", toggleConditional);
+  $("BACKUP").addEventListener("change", toggleConditional);
+
+  function loadConfig() {
+    return api("/api/config").then(function (res) {
+      var c = res.config || {};
+      TEXT_KEYS.forEach(function (k) {
+        if (!c[k]) return;
+        if (k === "TZ" && !Array.prototype.some.call(zoneSel.options, function (o) { return o.value === c[k].value; })) {
+          zoneSel.appendChild(el("option", "", c[k].value));
+        }
+        $(k).value = c[k].value;
+      });
+      SECRET_KEYS.forEach(function (k) { $(k).placeholder = c[k] && c[k].set ? "set (empty = keep)" : ""; });
+      $("BACKUP").checked = c.BACKUP && c.BACKUP.value === "true";
+      domain = c.FORGEJO_DOMAIN ? c.FORGEJO_DOMAIN.value : "";
+      toggleConditional();
+    });
+  }
+  function loadNetworks() {
+    api("/api/networks").then(function (r) {
+      var dl = $("nets"); dl.textContent = "";
+      (r.networks || []).forEach(function (n) { var o = el("option"); o.value = n; dl.appendChild(o); });
+    });
+  }
+
+  $("gen").addEventListener("click", function () {
+    var chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789", a = new Uint32Array(20), s = "";
+    crypto.getRandomValues(a);
+    for (var i = 0; i < a.length; i++) s += chars[a[i] % chars.length];
+    $("FORGEJO_ADMIN_PASSWORD").type = "text";
+    $("FORGEJO_ADMIN_PASSWORD").value = s;
+  });
+
+  function collect() {
+    var d = {};
+    TEXT_KEYS.concat(SECRET_KEYS).forEach(function (k) { d[k] = $(k).value; });
+    d.BACKUP = $("BACKUP").checked ? "true" : "false";
+    return d;
+  }
+  function clearErrors() {
+    document.querySelectorAll(".err").forEach(function (e) { e.classList.remove("err"); });
+    document.querySelectorAll(".errmsg").forEach(function (e) { e.remove(); });
+  }
+  function save(goNext) {
+    clearErrors();
+    return post("/api/config", collect()).then(function (res) {
+      if (!res.ok) {
+        var first = null;
+        Object.keys(res.errors || { _: res.error || "Could not save" }).forEach(function (k) {
+          var input = $(k); if (!input) return;
+          input.classList.add("err");
+          var d = input.closest("details"); if (d) d.open = true;
+          input.parentNode.appendChild(el("span", "errmsg", res.errors[k]));
+          first = first || input;
+        });
+        if (first) first.focus();
+        return false;
+      }
+      var banner = $("banner-saved"); banner.textContent = ""; banner.classList.remove("hidden");
+      banner.appendChild(el("strong", "", "Saved. "));
+      banner.appendChild(document.createTextNode(".env written."));
+      var gen = res.generated || {};
+      Object.keys(gen).forEach(function (k) {
+        var p = el("div"); p.appendChild(document.createTextNode("Generated " + k + " (shown once, store it now): "));
+        p.appendChild(el("code", "", gen[k])); banner.appendChild(p);
+      });
+      SECRET_KEYS.forEach(function (k) { $(k).value = ""; $(k).type = "password"; });
+      return loadConfig().then(function () { if (goNext) show("setup"); return true; });
+    });
+  }
+  $("form").addEventListener("submit", function (e) { e.preventDefault(); save(false); });
+  $("save-go").addEventListener("click", function () { save(true); });
+
+  // ------------------------------------------------------------- Preflight
+  function runPreflight() {
+    return api("/api/preflight").then(function (r) {
+      var ul = $("checks"); ul.textContent = ""; var all = true;
+      (r.checks || []).forEach(function (c) {
+        all = all && c.ok;
+        var li = el("li", c.ok ? "ok" : "fail"); li.appendChild(el("span", "dot"));
+        var mid = el("span"); mid.appendChild(document.createTextNode(c.name)); mid.appendChild(el("span", "dep", c.detail || ""));
+        li.appendChild(mid);
+        if (c.fix === "create_network") {
+          var b = el("button", "btn", "Create"); b.type = "button";
+          b.addEventListener("click", function () {
+            var name = c.name.replace(/^Proxy network "|"$/g, "");
+            post("/api/network", { name: name }).then(runPreflight);
+          });
+          li.appendChild(b);
+        } else { li.appendChild(el("span", "state", c.ok ? "ok" : "fix")); }
+        ul.appendChild(li);
+      });
+      $("start").disabled = !all;
+    });
+  }
+  $("recheck").addEventListener("click", runPreflight);
+
+  // ----------------------------------------------------------- Live-Ablauf
+  var STEPS = [["init-secrets", "creates SECRET_KEY and INTERNAL_TOKEN"], ["db", "Postgres, waits until healthy"],
+    ["forgejo", "starts, health check /api/healthz"], ["bootstrap", "admin, renovate-bot, tokens"],
+    ["dind", "Docker-in-Docker for CI builds"], ["runner", "registers itself, starts the daemon"], ["renovate", "dependency update PRs"]];
+  var lines = [], current = "setup output", es = null, logEs = null, services = [], jobState = {};
+
+  function renderSteps() {
+    var ul = $("steps"); ul.textContent = "";
+    STEPS.forEach(function (s) {
+      var row = services.filter(function (x) { return x.service === s[0]; })[0];
+      var cls = "", label = "waiting";
+      if (row) {
+        if (row.state === "exited" && Number(row.exit_code) === 0) { cls = "ok"; label = "done"; }
+        else if (row.state === "exited") { cls = "fail"; label = "failed (" + row.exit_code + ")"; }
+        else if (row.state === "running" && (!row.health || row.health === "healthy")) { cls = "ok"; label = row.health ? "healthy" : "running"; }
+        else if (row.state === "running" || row.state === "restarting") { cls = row.state === "restarting" ? "fail" : "run"; label = row.health || row.state; }
+        else { cls = "run"; label = row.state; }
+      }
+      var li = el("li", cls); li.appendChild(el("span", "dot"));
+      var mid = el("span"); mid.appendChild(document.createTextNode(s[0])); mid.appendChild(el("span", "dep", s[1])); li.appendChild(mid);
+      li.appendChild(el("span", "state", label)); ul.appendChild(li);
+    });
+    var hint = $("jobhint");
+    if (jobState.running) hint.textContent = "Running ...";
+    else if (jobState.exit_code === 0) hint.textContent = "Finished.";
+    else if (jobState.exit_code != null) hint.textContent = "docker compose exited with code " + jobState.exit_code + ". See the log.";
+    var done = ["forgejo", "runner"].every(function (n) { var r = services.filter(function (x) { return x.service === n; })[0]; return r && r.state === "running"; });
+    var b = $("banner-done");
+    if (done && domain) {
+      b.classList.remove("hidden"); b.textContent = "";
+      b.appendChild(document.createTextNode("Stack is up. Forgejo: "));
+      var a = el("a", "", "https://" + domain); a.href = "https://" + domain; a.target = "_blank"; a.rel = "noopener"; b.appendChild(a);
+      b.appendChild(document.createTextNode(". Create the proxy host first if you cannot reach it, then add renovate-bot as collaborator (see Help)."));
+    }
+  }
+  function renderTabs() {
+    var box = $("logtabs"); box.textContent = "";
+    ["setup output"].concat(STEPS.map(function (s) { return s[0]; })).forEach(function (n) {
+      var b = el("button", "", n); b.type = "button"; b.setAttribute("aria-pressed", n === current ? "true" : "false");
+      b.addEventListener("click", function () { current = n; renderTabs(); switchLog(); }); box.appendChild(b);
+    });
+  }
+  function appendLog(arr) {
+    var box = $("log"), stick = box.scrollTop + box.clientHeight >= box.scrollHeight - 20;
+    arr.forEach(function (l) { box.appendChild(document.createTextNode(l + "\n")); });
+    if (stick) box.scrollTop = box.scrollHeight;
+  }
+  function switchLog() {
+    if (logEs) { logEs.close(); logEs = null; }
+    var box = $("log"); box.textContent = "";
+    if (current === "setup output") { appendLog(lines); return; }
+    logEs = new EventSource("/api/logs?service=" + encodeURIComponent(current));
+    logEs.addEventListener("log", function (e) { appendLog(JSON.parse(e.data)); });
+  }
+  function connect() {
+    if (es) return;
+    es = new EventSource("/api/events");
+    es.addEventListener("log", function (e) { var l = JSON.parse(e.data); lines = lines.concat(l); if (current === "setup output") appendLog(l); });
+    es.addEventListener("status", function (e) { var d = JSON.parse(e.data); services = d.services; jobState = d.job; renderSteps(); renderStatus(); });
+    es.addEventListener("job", function (e) { jobState = JSON.parse(e.data); });
+  }
+  $("start").addEventListener("click", function () {
+    lines = []; if (current === "setup output") $("log").textContent = "";
+    post("/api/start").then(function (r) { if (!r.ok) { $("jobhint").textContent = r.error || "Could not start"; } else { jobState = { running: true }; renderSteps(); } });
+  });
+
+  // ---------------------------------------------------------------- Status
+  var stats = {};
+  function renderStatus() {
+    var body = $("status-body"); body.textContent = "";
+    if (!services.length) { var tr = el("tr"); var td = el("td", "hint", "Nothing running yet. Start the setup first."); td.colSpan = 5; tr.appendChild(td); body.appendChild(tr); return; }
+    services.forEach(function (s) {
+      var tr = el("tr"), st = stats[s.name] || {};
+      tr.appendChild(el("td", "", s.service));
+      var ok = (s.state === "running" && (!s.health || s.health === "healthy")) || (s.state === "exited" && Number(s.exit_code) === 0);
+      var td = el("td"); td.appendChild(el("span", "pill " + (ok ? "ok" : s.state === "running" ? "warn" : "fail"), s.health || s.state)); tr.appendChild(td);
+      tr.appendChild(el("td", "", st.cpu || "-")); tr.appendChild(el("td", "", st.mem || "-")); tr.appendChild(el("td", "hint", s.status));
+      body.appendChild(tr);
+    });
+  }
+  function pollStats() {
+    if ($("status").classList.contains("hidden")) return;
+    api("/api/stats").then(function (r) { stats = r.stats || {}; renderStatus(); setTimeout(pollStats, 5000); });
+  }
+
+  // ------------------------------------------------------------------ Hilfe
+  var helpLoaded = false;
+  function inline(text, parent) {
+    // Markdown-Inline: `code`, **fett**, [text](https://...)
+    var re = /`([^`]+)`|\*\*([^*]+)\*\*|\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, last = 0, m;
+    while ((m = re.exec(text))) {
+      if (m.index > last) parent.appendChild(document.createTextNode(text.slice(last, m.index)));
+      if (m[1] != null) parent.appendChild(el("code", "", m[1]));
+      else if (m[2] != null) parent.appendChild(el("strong", "", m[2]));
+      else { var a = el("a", "", m[3]); a.href = m[4]; a.target = "_blank"; a.rel = "noopener"; parent.appendChild(a); }
+      last = re.lastIndex;
+    }
+    if (last < text.length) parent.appendChild(document.createTextNode(text.slice(last)));
+  }
+  function renderMarkdown(md) {
+    var root = document.createDocumentFragment(), toc = $("toc"), i = 0, L = md.split("\n"), list = null, para = null;
+    toc.textContent = "";
+    function flush() { list = null; para = null; }
+    while (i < L.length) {
+      var line = L[i];
+      if (/^```/.test(line)) {
+        var pre = el("pre"), code = []; i++;
+        while (i < L.length && !/^```/.test(L[i])) code.push(L[i++]);
+        pre.textContent = code.join("\n"); root.appendChild(pre); flush(); i++; continue;
+      }
+      var h = /^(#{1,3})\s+(.*)$/.exec(line);
+      if (h) {
+        var he = el("h" + h[1].length); inline(h[2], he); root.appendChild(he); flush();
+        if (h[1].length === 2) { (function (target, label) {
+          var a = el("a", "", label); a.addEventListener("click", function () { target.scrollIntoView({ behavior: "smooth" }); }); toc.appendChild(a); })(he, h[2]); }
+        i++; continue;
+      }
+      if (/^\|/.test(line) && /^\|[\s:|-]+\|?$/.test(L[i + 1] || "")) {
+        var tbl = el("table"), head = el("thead"), hr = el("tr");
+        line.split("|").slice(1, -1).forEach(function (c) { var th = el("th"); inline(c.trim(), th); hr.appendChild(th); });
+        head.appendChild(hr); tbl.appendChild(head); var tb = el("tbody"); i += 2;
+        while (i < L.length && /^\|/.test(L[i])) {
+          var tr = el("tr"); L[i].split("|").slice(1, -1).forEach(function (c) { var td = el("td"); td.style.whiteSpace = "normal"; inline(c.trim(), td); tr.appendChild(td); });
+          tb.appendChild(tr); i++;
+        }
+        tbl.appendChild(tb); root.appendChild(tbl); flush(); continue;
+      }
+      var li = /^\s*(?:[-*]|\d+\.)\s+(.*)$/.exec(line);
+      if (li) {
+        var ordered = /^\s*\d+\./.test(line);
+        if (!list || list.tagName !== (ordered ? "OL" : "UL")) { list = el(ordered ? "ol" : "ul"); root.appendChild(list); }
+        var item = el("li"); inline(li[1], item); list.appendChild(item); para = null; i++; continue;
+      }
+      if (!line.trim()) { flush(); i++; continue; }
+      if (!para) { para = el("p"); root.appendChild(para); list = null; } else para.appendChild(document.createTextNode(" "));
+      inline(line.trim(), para); i++;
+    }
+    var out = $("helpbody"); out.textContent = ""; out.appendChild(root);
+  }
+  function loadHelp() {
+    if (helpLoaded) return;
+    fetch("/api/help", { credentials: "same-origin" }).then(function (r) { return r.ok ? r.text() : Promise.reject(); })
+      .then(function (t) { helpLoaded = true; renderMarkdown(t); })
+      .catch(function () { $("helpbody").textContent = "docs/HELP.md not found in the stack directory."; });
+  }
+
+  // ------------------------------------------------------------------ Start
+  loadConfig().then(function () {
+    loadNetworks(); renderTabs(); renderSteps(); connect();
+    show((location.hash || "").slice(1));
+  });
+})();
+</script>
+</body>
+</html>

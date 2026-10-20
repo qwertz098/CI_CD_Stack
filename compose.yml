@@ -22,7 +22,7 @@ name: forgejo-stack
 services:
   forgejo:
     image: codeberg.org/forgejo/forgejo:${FORGEJO_VERSION}
-    container_name: forgejo
+    container_name: ${STACK_NAME:-forgejo}
     restart: unless-stopped
     depends_on:
       db:
@@ -73,7 +73,7 @@ services:
 
   db:
     image: postgres:16-alpine
-    container_name: forgejo-db
+    container_name: ${STACK_NAME:-forgejo}-db
     restart: unless-stopped
     environment:
       POSTGRES_USER: forgejo
@@ -96,7 +96,7 @@ services:
   # eigenes Unterverzeichnis gemountet.
   init-secrets:
     image: codeberg.org/forgejo/forgejo:${FORGEJO_VERSION}
-    container_name: forgejo-init-secrets
+    container_name: ${STACK_NAME:-forgejo}-init-secrets
     restart: "no"
     entrypoint: ["/bin/sh", "-c"]
     command:
@@ -130,7 +130,7 @@ services:
   # Tokens und den Runner-Registrierungs-Token. Idempotent (siehe bootstrap.sh).
   bootstrap:
     image: codeberg.org/forgejo/forgejo:${FORGEJO_VERSION}
-    container_name: forgejo-bootstrap
+    container_name: ${STACK_NAME:-forgejo}-bootstrap
     restart: "no"
     depends_on:
       forgejo:
@@ -152,7 +152,7 @@ services:
   # Docker-in-Docker: Builds laufen isoliert, kein Zugriff auf den Host-Docker
   dind:
     image: docker:27-dind
-    container_name: forgejo-dind
+    container_name: ${STACK_NAME:-forgejo}-dind
     restart: unless-stopped
     privileged: true
     command: ["dockerd", "-H", "tcp://0.0.0.0:2375", "--tls=false"]
@@ -167,7 +167,7 @@ services:
 
   runner:
     image: code.forgejo.org/forgejo/runner:${RUNNER_VERSION}
-    container_name: forgejo-runner
+    container_name: ${STACK_NAME:-forgejo}-runner
     restart: unless-stopped
     user: "0:0"
     working_dir: /data
@@ -202,7 +202,7 @@ services:
   # Öffnet PRs für veraltete npm-Pakete und Docker-Images (läuft alle 6 Stunden)
   renovate:
     image: ghcr.io/renovatebot/renovate:latest
-    container_name: forgejo-renovate
+    container_name: ${STACK_NAME:-forgejo}-renovate
     restart: unless-stopped
     depends_on:
       bootstrap:
@@ -231,7 +231,7 @@ services:
   # ---------------------------------------------------------- Monitoring
   uptime-kuma:
     image: louislam/uptime-kuma:2
-    container_name: uptime-kuma
+    container_name: ${STACK_NAME:-forgejo}-uptime-kuma
     restart: unless-stopped
     environment:
       TZ: ${TZ}
@@ -241,10 +241,12 @@ services:
       - proxy
 
   # -------------------------------------------------------------- Backup
+  # Optional: nur aktiv mit COMPOSE_PROFILES=backup in der .env (die Setup-UI setzt das).
   # 1) konsistenter nächtlicher Postgres-Dump in ./backup/db
   db-dump:
+    profiles: ["backup"]
     image: prodrigestivill/postgres-backup-local:16
-    container_name: forgejo-db-dump
+    container_name: ${STACK_NAME:-forgejo}-db-dump
     restart: unless-stopped
     depends_on:
       db:
@@ -267,8 +269,9 @@ services:
   # 2) restic schiebt Dumps + Forgejo-Daten verschlüsselt ins Offsite-Ziel.
   #    Die laufende Postgres-Datei (data/postgres) wird bewusst NICHT gesichert.
   restic:
+    profiles: ["backup"]
     image: mazzolino/restic:1.7
-    container_name: forgejo-restic
+    container_name: ${STACK_NAME:-forgejo}-restic
     restart: unless-stopped
     environment:
       TZ: ${TZ}
@@ -276,8 +279,8 @@ services:
       BACKUP_CRON: "0 30 3 * * *"
       PRUNE_CRON: "0 0 5 * * 0"
       CHECK_CRON: "0 0 6 * * 0"
-      RESTIC_REPOSITORY: ${RESTIC_REPOSITORY}
-      RESTIC_PASSWORD: ${RESTIC_PASSWORD}
+      RESTIC_REPOSITORY: ${RESTIC_REPOSITORY:-}
+      RESTIC_PASSWORD: ${RESTIC_PASSWORD:-}
       RESTIC_BACKUP_SOURCES: /source
       RESTIC_FORGET_ARGS: "--keep-daily 7 --keep-weekly 4 --keep-monthly 6"
       # für S3-kompatible Ziele (bei SFTP/Storage Box stattdessen SSH-Key mounten)

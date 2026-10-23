@@ -24,6 +24,20 @@ Startet eine Weboberfläche auf `127.0.0.1:8080` (Token steht in der Konsole; vo
 
 Ohne `setup.sh` geht es auch per Compose: `docker compose -f compose.setup.yml up` startet dasselbe Image aus ghcr (Datei `compose.setup.yml`, Port per `SETUP_PORT`, Version per `SETUP_VERSION`). Das Paket muss dafür öffentlich sein. Das Backup ist optional (Profil `backup`).
 
+Die Bilder zeigen die UI mit einem simulierten Docker-Daemon und Beispielwerten (kein echter Lauf).
+
+**1 Configure:** Domain, Admin, Proxy und optional Backup eintragen.
+
+![Setup-UI: Konfiguration](docs/screenshots/configure.png)
+
+**2 Setup:** Preflight, Fortschritt je Dienst und Log live.
+
+![Setup-UI: Aufbau mit Fortschritt und Log](docs/screenshots/setup.png)
+
+**3 Status:** Health, CPU und Speicher aller Container.
+
+![Setup-UI: Status der Container](docs/screenshots/status.png)
+
 ## Inhalt
 
 1. [Voraussetzungen und Randbedingungen](#voraussetzungen-und-randbedingungen)

@@ -14,12 +14,15 @@
 # - Feste Version statt latest: SETUP_VERSION=0.1.0 ...
 # - Das Paket ghcr.io/qwertz098/ci_cd_stack-setup muss öffentlich sein, sonst vorher
 #   `docker login ghcr.io`.
+# - Eigene Registry (z. B. die von Forgejo) statt ghcr:
+#   SETUP_IMAGE=git.example.com/owner/stack-setup docker compose -f compose.setup.yml up
+#   (vorher `docker login git.example.com`; Image baut workflow-setup-image.yml)
 
 name: stack-setup
 
 services:
   setup-ui:
-    image: ghcr.io/qwertz098/ci_cd_stack-setup:${SETUP_VERSION:-latest}
+    image: ${SETUP_IMAGE:-ghcr.io/qwertz098/ci_cd_stack-setup}:${SETUP_VERSION:-latest}
     container_name: stack-setup
     restart: "no"
     working_dir: ${PWD:?Im Stack-Ordner ausführen (PWD fehlt)}

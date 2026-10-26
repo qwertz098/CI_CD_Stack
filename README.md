@@ -24,6 +24,8 @@ Startet eine Weboberfläche auf `127.0.0.1:8080` (Token steht in der Konsole; vo
 
 Ohne `setup.sh` geht es auch per Compose: `docker compose -f compose.setup.yml up` startet dasselbe Image aus ghcr (Datei `compose.setup.yml`, Port per `SETUP_PORT`, Version per `SETUP_VERSION`). Das Paket muss dafür öffentlich sein. Das Backup ist optional (Profil `backup`).
 
+**Eigene Registry statt ghcr:** Die eingebaute Forgejo-Registry (`git.example.com/OWNER/NAME`) kann auch das Setup-Image liefern. Vorlage `workflow-setup-image.yml` in das Forgejo-Repo dieses Stacks nach `.forgejo/workflows/` legen, Tag `v*` pushen, danach `SETUP_IMAGE=git.example.com/OWNER/stack-setup docker compose -f compose.setup.yml up` (vorher `docker login git.example.com`). `setup.sh` akzeptiert dieselbe Variable.
+
 Die Bilder zeigen die UI mit einem simulierten Docker-Daemon und Beispielwerten (kein echter Lauf).
 
 **1 Configure:** Domain, Admin, Proxy und optional Backup eintragen.

@@ -1,0 +1,37 @@
+# Ablegen als: .forgejo/workflows/setup-image.yml im Forgejo-Repo DIESES Stacks
+# (Repo in Forgejo anlegen und den Stack dorthin pushen, z. B. als zweiter Remote).
+#
+# Baut das Image der Setup-UI und legt es in die eingebaute Registry von Forgejo:
+#   git.example.com/<owner>/stack-setup:<version>
+# Danach: SETUP_IMAGE=git.example.com/<owner>/stack-setup docker compose -f compose.setup.yml up
+#
+# Einmalig in den Repo-Einstellungen (Actions > Secrets) anlegen:
+#   REGISTRY_USER   Forgejo-Benutzername
+#   REGISTRY_TOKEN  Zugriffstoken mit Recht "package: read/write"
+# Der Pfad (Benutzer/Organisation + Name) muss kleingeschrieben sein.
+name: setup-image
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build und Push
+        env:
+          REGISTRY_USER: ${{ secrets.REGISTRY_USER }}
+          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+        run: |
+          REGISTRY="${GITHUB_SERVER_URL#https://}"
+          OWNER=$(echo "${GITHUB_REPOSITORY%%/*}" | tr '[:upper:]' '[:lower:]')
+          IMAGE="${REGISTRY}/${OWNER}/stack-setup"
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then VERSION="${GITHUB_REF_NAME#v}"; else VERSION="edge"; fi
+          echo "$REGISTRY_TOKEN" | docker login "$REGISTRY" -u "$REGISTRY_USER" --password-stdin
+          docker build -t "$IMAGE:$VERSION" -t "$IMAGE:latest" setup
+          docker push "$IMAGE:$VERSION"
+          docker push "$IMAGE:latest"

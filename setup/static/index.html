@@ -375,6 +375,13 @@ th{font:11px var(--font-mono);letter-spacing:.05em;text-transform:uppercase;colo
       b.appendChild(document.createTextNode("Stack is up. Forgejo: "));
       var a = el("a", "", "https://" + domain); a.href = "https://" + domain; a.target = "_blank"; a.rel = "noopener"; b.appendChild(a);
       b.appendChild(document.createTextNode(". Create the proxy host first if you cannot reach it, then add renovate-bot as collaborator (see Help)."));
+      var r = el("div", "hint"); r.style.marginTop = "6px";
+      r.appendChild(document.createTextNode("Your own container registry is built in: "));
+      r.appendChild(el("code", "", "docker login " + domain));
+      r.appendChild(document.createTextNode(", then push images as "));
+      r.appendChild(el("code", "", domain + "/OWNER/NAME"));
+      r.appendChild(document.createTextNode(" (see Help, Release and deploy)."));
+      b.appendChild(r);
     }
   }
   function renderTabs() {

@@ -12,6 +12,7 @@ Selbst gehosteter Forgejo-Stack per Docker Compose als Cloud-Repo für Claude-Co
 - `docs/HELP.md`: Hilfe (Englisch): Zweck, Arbeitsweise, CI/CD-Anleitung, Abschnitt für LLM-Agenten; wird in der Setup-UI angezeigt
 - `setup.sh`, `setup/`: Setup-UI (Python, nur Standardbibliothek; `app.py`, `static/index.html`, `Dockerfile`). Schreibt `.env`, startet `docker compose up -d`, zeigt Live-Status. UI-Texte Englisch
 - `compose.setup.yml`: startet die Setup-UI aus dem ghcr-Image per Compose (Alternative zu `setup.sh`)
+- `workflow-setup-image.yml`: Forgejo-Workflow-Vorlage, baut das Setup-Image in die eigene Forgejo-Registry (`SETUP_IMAGE=...`)
 - `.github/workflows/setup-image.yml`: baut das UI-Image nach ghcr.io
 - `compose.yml`: Stack (init-secrets, Forgejo, Postgres, bootstrap, dind, Runner, Renovate, Uptime Kuma, db-dump, restic)
 - `compose.caddy.yml` und `Caddyfile`: optionale Alternative zum NPM (Caddy mit automatischem HTTPS für Forgejo und Uptime Kuma)

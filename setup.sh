@@ -3,7 +3,7 @@
 #
 #   ./setup.sh            UI auf 127.0.0.1:8080 starten
 #   SETUP_PORT=9000 ./setup.sh
-#   SETUP_IMAGE=stack-setup ./setup.sh   (lokales Image statt ghcr.io)
+#   SETUP_IMAGE=git.example.com/owner/stack-setup:latest ./setup.sh   (eigene Registry statt ghcr.io)
 #
 # Die UI braucht den Docker-Socket und hat damit Root-Rechte auf dem Host. Deshalb:
 # nur an 127.0.0.1 gebunden (Zugriff von außen per SSH-Tunnel), Zugriffstoken in der
@@ -15,8 +15,8 @@ PORT=${SETUP_PORT:-8080}
 IMAGE=${SETUP_IMAGE:-ghcr.io/qwertz098/ci_cd_stack-setup:latest}
 TOKEN=${SETUP_TOKEN:-$(head -c 18 /dev/urandom | od -An -tx1 | tr -d ' \n')}
 
-if [ "${SETUP_IMAGE:-}" = "" ] && ! docker pull -q "$IMAGE" >/dev/null 2>&1; then
-  echo "Image $IMAGE nicht verfügbar, baue lokal ..."
+if ! docker pull -q "$IMAGE" >/dev/null 2>&1 && ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
+  echo "Image $IMAGE nicht verfügbar (privat oder nicht gebaut?), baue lokal ..."
   IMAGE=stack-setup
   docker build -q -t "$IMAGE" "$DIR/setup" >/dev/null
 fi

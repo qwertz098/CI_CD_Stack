@@ -147,6 +147,19 @@ docker compose pull && docker compose up -d
 
 Rollback is the same step with the previous version number.
 
+## Your own registry (instead of ghcr)
+
+Forgejo's built-in container registry works like `ghcr.io`: images are named `git.example.com/OWNER/NAME` (lowercase), you log in with `docker login git.example.com` and a Forgejo token (`read:package` to pull, `write:package` to push).
+
+To get the setup UI image from it, put this stack into a Forgejo repository, copy `workflow-setup-image.yml` to `.forgejo/workflows/setup-image.yml`, add the secrets `REGISTRY_USER` and `REGISTRY_TOKEN`, and push a tag `v*`. Then start the UI with:
+
+```
+docker login git.example.com
+SETUP_IMAGE=git.example.com/OWNER/stack-setup docker compose -f compose.setup.yml up
+```
+
+`./setup.sh` reads the same `SETUP_IMAGE` variable. Use the same pattern for your own application images: the release workflow for projects pushes to this registry.
+
 ## Dependency updates
 
 Copy `renovate.json` into each repository. Renovate opens pull requests for outdated npm packages and Docker image tags, bundled as minor/patch groups, before 6 am on Mondays. CI runs on those PRs like on any other. Merging them is a human decision.
